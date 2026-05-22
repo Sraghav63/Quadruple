@@ -1,0 +1,11 @@
+gymnasium<1.1,>=0.29
+mujoco<4,>=3.1
+numpy>=1.26
+
+[dev]
+pytest>=8
+ruff>=0.6
+
+[rl]
+stable-baselines3[extra]<3,>=2.3
+tensorboard>=2.16

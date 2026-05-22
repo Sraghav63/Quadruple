@@ -1,0 +1,85 @@
+Metadata-Version: 2.4
+Name: quad-pendulum
+Version: 0.1.0
+Summary: RL scaffold for a MuJoCo quadruple inverted pendulum on a cart.
+Requires-Python: <3.13,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: gymnasium<1.1,>=0.29
+Requires-Dist: mujoco<4,>=3.1
+Requires-Dist: numpy>=1.26
+Provides-Extra: rl
+Requires-Dist: stable-baselines3[extra]<3,>=2.3; extra == "rl"
+Requires-Dist: tensorboard>=2.16; extra == "rl"
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"
+
+# Quadruple Inverted Pendulum RL
+
+MuJoCo + Gymnasium + Stable-Baselines3 scaffold for training a cart to balance a
+1- to 4-link inverted pendulum. The environment is written so you can start with
+one link, then increase difficulty until the quadruple pendulum works.
+
+## Recommended Setup
+
+Use Python 3.11 or 3.12 for this project. The local system Python may be newer
+than the RL stack currently supports.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[rl]"
+```
+
+If you only have Python 3.14 installed, install Python 3.12 first and create the
+virtual environment with that interpreter.
+
+## Train
+
+Start with the single pendulum:
+
+```bash
+python scripts/train.py --links 1 --algo sac --timesteps 100000
+```
+
+Then increase difficulty:
+
+```bash
+python scripts/train.py --links 2 --algo sac --timesteps 300000
+python scripts/train.py --links 3 --algo sac --timesteps 600000
+python scripts/train.py --links 4 --algo sac --timesteps 1000000
+```
+
+PPO is also supported:
+
+```bash
+python scripts/train.py --links 4 --algo ppo --timesteps 1000000
+```
+
+Training logs are written to `runs/`, and saved policies are written to
+`models/`.
+
+## Watch A Policy
+
+```bash
+python scripts/enjoy.py --links 4 --model models/sac_links4.zip
+```
+
+## Project Direction
+
+Good summer milestones:
+
+1. Balance 1 link from small random initial angles.
+2. Balance 2 links from small random initial angles.
+3. Balance 4 links from small random initial angles.
+4. Add stronger randomization and disturbances.
+5. Add curriculum learning inside the 4-link environment by slowly increasing
+   reset noise and disturbance strength.
+6. Try swing-up from hanging or mixed initial states.
+
+The current environment is intentionally focused on upright balancing. Swing-up
+is a harder second phase because the reward and initial-state distribution need
+to change. The 1-, 2-, and 3-link environments are practice stages; their neural
+networks cannot be loaded directly into the 4-link environment because the
+observation dimensions are different.

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quad-pendulum"
+version = "0.1.0"
+description = "RL scaffold for a MuJoCo quadruple inverted pendulum on a cart."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "gymnasium>=0.29,<1.1",
+  "mujoco>=3.1,<4",
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+rl = [
+  "stable-baselines3[extra]>=2.3,<3",
+  "tensorboard>=2.16",
+]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
