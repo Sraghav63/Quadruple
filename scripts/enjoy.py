@@ -19,6 +19,7 @@ import pygame
 from stable_baselines3 import PPO, SAC
 
 from quad_pendulum import QuadPendulumEnv
+from quad_pendulum.policy import default_model_path
 
 LINK_LENGTH = 0.45
 
@@ -107,7 +108,7 @@ def run_pygame_viewer(args: argparse.Namespace) -> None:
 
 
 def load_model(args: argparse.Namespace):
-    model_path = args.model or Path(f"models/{args.algo}_links{args.links}.zip")
+    model_path = default_model_path(args.algo, args.links, args.model)
     if not model_path.exists():
         raise FileNotFoundError(f"No model found at {model_path}. Use --model or --control mouse.")
     model_cls = SAC if args.algo == "sac" else PPO

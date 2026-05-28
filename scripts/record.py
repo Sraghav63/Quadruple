@@ -14,6 +14,7 @@ import numpy as np
 from stable_baselines3 import PPO, SAC
 
 from quad_pendulum import QuadPendulumEnv
+from quad_pendulum.policy import default_model_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,7 +45,7 @@ def main() -> None:
 
     model = None
     if not args.zero_action:
-        model_path = args.model or Path(f"models/{args.algo}_links{args.links}.zip")
+        model_path = default_model_path(args.algo, args.links, args.model)
         if not model_path.exists():
             raise FileNotFoundError(
                 f"No model found at {model_path}. Pass --model or use --zero-action."
@@ -88,4 +89,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

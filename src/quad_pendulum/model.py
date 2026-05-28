@@ -33,7 +33,7 @@ def make_cart_pendulum_xml(
   </visual>
 
   <default>
-    <joint damping="0.002" armature="0.001"/>
+    <joint damping="0.004" armature="0.001" frictionloss="0.001"/>
     <geom friction="0.7 0.005 0.0001" density="500"/>
   </default>
 

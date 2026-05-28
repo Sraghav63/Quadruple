@@ -44,10 +44,16 @@ python scripts/train.py --links 1 --algo sac --timesteps 1000 --check-env
 Training is headless. It does not open a simulation window. Use `enjoy.py`,
 `show3d.py`, or `record.py` after training to view the result.
 
+The environment includes realism constraints by default: one control-step
+latency, first-order actuator lag, force slew limits, action deadband, motor
+noise, small random cart disturbances, hinge friction, observation noise, and a
+stricter fall threshold for upright balancing. These make the task harder and
+invalidate older policies trained against the instantaneous-control environment.
+
 Train one link:
 
 ```fish
-python scripts/train.py --links 1 --algo sac --timesteps 100000 --overwrite
+python scripts/train.py --links 1 --algo sac --timesteps 200000 --overwrite
 ```
 
 Train two links:
@@ -233,11 +239,12 @@ If `python -m pip` says pip is missing, use:
 uv pip install -e ".[rl]"
 ```
 
-If the cart barely moves, make sure you are using the latest code and retrain.
-An older model may have been trained before the rail collision fix:
+If the cart barely moves or falls quickly, make sure you are using the latest
+code and retrain. Older models may have been trained before the rail collision
+fix or before actuator/sensor realism was enabled:
 
 ```fish
-python scripts/train.py --links 1 --algo sac --timesteps 100000 --overwrite
+python scripts/train.py --links 1 --algo sac --timesteps 200000 --overwrite
 ```
 
 If the trained model falls quickly, increase timesteps:
@@ -254,13 +261,12 @@ python scripts/show3d.py --links 2 --model models/sac_links2.zip --port 8770
 
 ## Summer Build Plan
 
-1. Get 1-link balancing reliably.
+1. Get 1-link balancing reliably with the realism constraints enabled.
 2. Train 2-link SAC until it balances from small random initial angles.
 3. Train 3-link and 4-link versions.
 4. Tune reward weights and reset noise.
-5. Add disturbances and randomization.
+5. Tune disturbance strength and curriculum settings.
 6. Add a separate swing-up task later.
 
 The current environment is an upright-balancing task. Swing-up is a harder
 second phase because it needs different rewards and reset states.
-

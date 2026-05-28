@@ -15,6 +15,7 @@ import numpy as np
 from stable_baselines3 import PPO, SAC
 
 from quad_pendulum import QuadPendulumEnv
+from quad_pendulum.policy import default_model_path
 
 ROOT = Path(__file__).resolve().parents[1]
 VIEWER_DIR = ROOT / "viewer3d"
@@ -115,7 +116,7 @@ def generate_trajectory(args: argparse.Namespace) -> dict:
 
 
 def load_model(args: argparse.Namespace):
-    model_path = args.model or Path(f"models/{args.algo}_links{args.links}.zip")
+    model_path = default_model_path(args.algo, args.links, args.model)
     if not model_path.exists():
         raise FileNotFoundError(f"No model found at {model_path}. Use --model or --control zero.")
     model_cls = SAC if args.algo == "sac" else PPO

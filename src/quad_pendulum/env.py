@@ -43,11 +43,32 @@ class QuadPendulumEnv(gym.Env):
         reset_noise_scale: float = 0.04,
         max_cart_position: float = 2.4,
         max_episode_steps: int = 1000,
-        terminate_cos_threshold: float = -0.3,
+        terminate_cos_threshold: float = 0.5,
+        control_latency_steps: int = 1,
+        actuator_time_constant: float = 0.04,
+        max_force_rate: float = 600.0,
+        control_deadband: float = 0.02,
+        force_noise_std: float = 0.5,
+        disturbance_force_std: float = 0.25,
+        observation_noise_scale: float = 1.0,
         reward_weights: RewardWeights | None = None,
     ) -> None:
         if render_mode not in self.metadata["render_modes"] and render_mode is not None:
             raise ValueError(f"Unsupported render_mode: {render_mode}")
+        if control_latency_steps < 0:
+            raise ValueError("control_latency_steps must be non-negative")
+        if actuator_time_constant < 0:
+            raise ValueError("actuator_time_constant must be non-negative")
+        if max_force_rate <= 0:
+            raise ValueError("max_force_rate must be positive")
+        if control_deadband < 0:
+            raise ValueError("control_deadband must be non-negative")
+        if force_noise_std < 0:
+            raise ValueError("force_noise_std must be non-negative")
+        if disturbance_force_std < 0:
+            raise ValueError("disturbance_force_std must be non-negative")
+        if observation_noise_scale < 0:
+            raise ValueError("observation_noise_scale must be non-negative")
 
         self.links = links
         self.render_mode = render_mode
@@ -57,8 +78,19 @@ class QuadPendulumEnv(gym.Env):
         self.max_cart_position = max_cart_position
         self.max_episode_steps = max_episode_steps
         self.terminate_cos_threshold = terminate_cos_threshold
+        self.control_latency_steps = control_latency_steps
+        self.actuator_time_constant = actuator_time_constant
+        self.max_force_rate = max_force_rate
+        self.control_deadband = control_deadband
+        self.force_noise_std = force_noise_std
+        self.disturbance_force_std = disturbance_force_std
+        self.observation_noise_scale = observation_noise_scale
         self.reward_weights = reward_weights or RewardWeights()
         self.elapsed_steps = 0
+        self._control_buffer = [0.0] * control_latency_steps
+        self._motor_force = 0.0
+        self._last_applied_force = 0.0
+        self._last_disturbance_force = 0.0
 
         xml = make_cart_pendulum_xml(links=links)
         self.model = mujoco.MjModel.from_xml_string(xml)
@@ -84,6 +116,10 @@ class QuadPendulumEnv(gym.Env):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
         self.elapsed_steps = 0
+        self._control_buffer = [0.0] * self.control_latency_steps
+        self._motor_force = 0.0
+        self._last_applied_force = 0.0
+        self._last_disturbance_force = 0.0
 
         noise_scale = self.reset_noise_scale
         if options and "noise_scale" in options:
@@ -99,14 +135,29 @@ class QuadPendulumEnv(gym.Env):
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         action = np.asarray(action, dtype=np.float32).reshape(self.action_space.shape)
         clipped_action = np.clip(action, self.action_space.low, self.action_space.high)
-        self.data.ctrl[0] = float(clipped_action[0]) * self.force_scale
+        target_force = self._target_force(float(clipped_action[0]))
+        delayed_target_force = self._delayed_target_force(target_force)
+        applied_force = self._applied_motor_force(delayed_target_force)
+        self.data.ctrl[0] = applied_force
 
         for _ in range(self.frame_skip):
+            self._last_disturbance_force = self._sample_disturbance_force()
+            self.data.qfrc_applied[:] = 0.0
+            self.data.qfrc_applied[0] = self._last_disturbance_force
             mujoco.mj_step(self.model, self.data)
+        self.data.qfrc_applied[:] = 0.0
 
         self.elapsed_steps += 1
         obs = self._get_obs()
         reward, reward_info = self._reward(float(clipped_action[0]))
+        reward_info.update(
+            {
+                "target_force": target_force,
+                "delayed_target_force": delayed_target_force,
+                "applied_force": applied_force,
+                "disturbance_force": self._last_disturbance_force,
+            }
+        )
         terminated = self._is_terminated()
         truncated = self.elapsed_steps >= self.max_episode_steps
 
@@ -168,7 +219,71 @@ class QuadPendulumEnv(gym.Env):
         for angle, angular_velocity in zip(angles, angular_velocities, strict=True):
             obs.extend((np.sin(angle), np.cos(angle), angular_velocity))
 
-        return np.asarray(obs, dtype=np.float32)
+        obs_array = np.asarray(obs, dtype=np.float32)
+        if self.observation_noise_scale > 0:
+            obs_array += self.np_random.normal(
+                0.0,
+                self._observation_noise_std(),
+                size=obs_array.shape,
+            ).astype(np.float32)
+        return obs_array
+
+    def _target_force(self, action: float) -> float:
+        if abs(action) < self.control_deadband:
+            return 0.0
+        return action * self.force_scale
+
+    def _delayed_target_force(self, target_force: float) -> float:
+        if self.control_latency_steps == 0:
+            return target_force
+
+        self._control_buffer.append(target_force)
+        return self._control_buffer.pop(0)
+
+    def _applied_motor_force(self, target_force: float) -> float:
+        step_dt = self.model.opt.timestep * self.frame_skip
+        if self.actuator_time_constant == 0:
+            desired_force = target_force
+        else:
+            alpha = 1.0 - float(np.exp(-step_dt / self.actuator_time_constant))
+            desired_force = self._motor_force + alpha * (target_force - self._motor_force)
+
+        max_delta = self.max_force_rate * step_dt
+        desired_force = float(
+            np.clip(
+                desired_force,
+                self._motor_force - max_delta,
+                self._motor_force + max_delta,
+            )
+        )
+        self._motor_force = desired_force
+
+        force_noise = 0.0
+        if self.force_noise_std > 0:
+            force_noise = float(self.np_random.normal(0.0, self.force_noise_std))
+
+        actuator_low, actuator_high = self.model.actuator_ctrlrange[0]
+        applied_force = float(
+            np.clip(
+                self._motor_force + force_noise,
+                max(-self.force_scale, actuator_low),
+                min(self.force_scale, actuator_high),
+            )
+        )
+        self._last_applied_force = applied_force
+        return applied_force
+
+    def _sample_disturbance_force(self) -> float:
+        if self.disturbance_force_std == 0:
+            return 0.0
+        return float(self.np_random.normal(0.0, self.disturbance_force_std))
+
+    def _observation_noise_std(self) -> np.ndarray:
+        per_link_std = [0.0015, 0.0015, 0.02]
+        std = [0.002, 0.02]
+        for _ in range(self.links):
+            std.extend(per_link_std)
+        return self.observation_noise_scale * np.asarray(std, dtype=np.float32)
 
     def _reward(self, action: float) -> tuple[float, dict]:
         weights = self.reward_weights

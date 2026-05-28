@@ -24,10 +24,16 @@ virtual environment with that interpreter.
 
 ## Train
 
+The environment now includes actuator and sensor realism: one control-step
+latency, motor lag, force slew limits, action deadband, motor noise, small cart
+disturbances, hinge friction, observation noise, and a stricter upright-only
+fall threshold. Retrain old policies after changing these settings; models
+trained before this change can look weak or twitchy in the new environment.
+
 Start with the single pendulum:
 
 ```bash
-python scripts/train.py --links 1 --algo sac --timesteps 100000 --overwrite
+python scripts/train.py --links 1 --algo sac --timesteps 200000 --overwrite
 ```
 
 Then increase difficulty:
@@ -111,7 +117,7 @@ Good summer milestones:
 1. Balance 1 link from small random initial angles.
 2. Balance 2 links from small random initial angles.
 3. Balance 4 links from small random initial angles.
-4. Add stronger randomization and disturbances.
+4. Tune realism constraints and disturbance strength.
 5. Add curriculum learning inside the 4-link environment by slowly increasing
    reset noise and disturbance strength.
 6. Try swing-up from hanging or mixed initial states.
