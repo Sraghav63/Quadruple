@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 rl = [
+  "pygame-ce>=2.5,<3",
   "stable-baselines3[extra]>=2.3,<3",
   "tensorboard>=2.16",
 ]
@@ -29,4 +30,3 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-

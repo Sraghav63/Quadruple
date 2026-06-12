@@ -7,5 +7,6 @@ pytest>=8
 ruff>=0.6
 
 [rl]
+pygame-ce<3,>=2.5
 stable-baselines3[extra]<3,>=2.3
 tensorboard>=2.16
