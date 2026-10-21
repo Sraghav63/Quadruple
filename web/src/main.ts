@@ -39,9 +39,9 @@ if (REPO_URL) {
 }
 
 function syncButtons(): void {
-  btnPause.textContent = paused ? "Resume" : "Pause";
+  btnPause.textContent = paused ? "resume" : "pause";
   const on = sim.controllerEnabled;
-  btnCtrl.textContent = `Controller: ${on ? "ON" : "OFF"}`;
+  btnCtrl.textContent = on ? "controller on" : "controller off";
   btnCtrl.classList.toggle("on", on);
 }
 

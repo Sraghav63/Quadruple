@@ -51,7 +51,8 @@ export interface Series { channel: number; color: string; dashed?: boolean; widt
 
 const NICE = [0.5, 1, 2, 5, 10, 20, 45, 90, 180, 360];
 const NICE_M = [0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5];
-const GRID_FRACTIONS = [-1, -0.5, 0, 0.5, 1];
+const GRID_FRACTIONS = [-1, 0, 1];
+const ZERO_LINE = "rgba(255,255,255,0.08)";
 const DASHED = [4, 4];
 const SOLID: number[] = [];
 
@@ -87,7 +88,7 @@ export class PlotCanvas {
   draw(hist: History): void {
     const ctx = this.ctx;
     const { w, h } = this;
-    const padL = 38, padR = 8, padT = 8, padB = 16;
+    const padL = 38, padR = 8, padT = 8, padB = 14;
     const pw = w - padL - padR, ph = h - padT - padB;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
@@ -107,26 +108,24 @@ export class PlotCanvas {
     this.range = target > this.range ? target : this.range + (target - this.range) * 0.05;
     const R = this.range;
 
-    // grid + labels
-    ctx.font = "10px system-ui, sans-serif";
+    // grid + labels: just -R, 0, +R
+    ctx.font = "10px 'Geist Mono', ui-monospace, monospace";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     ctx.lineWidth = 1;
     for (const f of GRID_FRACTIONS) {
       const y = padT + ph * (0.5 - f / 2);
-      ctx.strokeStyle = f === 0 ? "#34404f" : THEME.grid;
+      ctx.strokeStyle = f === 0 ? ZERO_LINE : THEME.grid;
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + pw, y); ctx.stroke();
       ctx.fillStyle = THEME.dim;
       const val = f * R;
-      ctx.fillText(Math.abs(val) < 1 && val !== 0 ? val.toFixed(2) : val.toFixed(Math.abs(val) < 10 && val % 1 !== 0 ? 1 : 0), padL - 4, y);
+      ctx.fillText(Math.abs(val) < 1 && val !== 0 ? val.toFixed(2) : val.toFixed(Math.abs(val) < 10 && val % 1 !== 0 ? 1 : 0), padL - 6, y);
     }
-    ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
-    for (let s = 0; s <= WINDOW_S; s += 2) {
-      const x = padL + pw * (s / WINDOW_S);
-      ctx.fillStyle = THEME.dim;
-      ctx.fillText(s === WINDOW_S ? "now" : `-${WINDOW_S - s}s`, Math.min(Math.max(x, padL + 8), padL + pw - 8), h - 3);
-    }
+    ctx.textAlign = "left";
+    ctx.fillText(`-${WINDOW_S}s`, padL, h - 2);
+    ctx.textAlign = "right";
+    ctx.fillText("now", padL + pw, h - 2);
     if (n < 2) return;
 
     ctx.save();
@@ -134,7 +133,7 @@ export class PlotCanvas {
     ctx.lineJoin = "round";
     for (const s of this.series) {
       ctx.strokeStyle = s.color;
-      ctx.lineWidth = s.width ?? 1.6;
+      ctx.lineWidth = s.width ?? 1.5;
       ctx.setLineDash(s.dashed ? DASHED : SOLID);
       ctx.beginPath();
       for (let i = 0; i < n; i++) {

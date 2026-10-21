@@ -1,6 +1,7 @@
 import type { SimStatus, SimulationApi } from "../sim/types";
 import { THEME, linkColor } from "./colors";
 
+const FONT = "11px 'Geist Mono', ui-monospace, monospace";
 const MAX_FLASH = 8;
 const FLASH_SECONDS = 0.6;
 
@@ -58,9 +59,10 @@ export class Renderer {
 
   private layout(): void {
     const margin = 0.16;
-    this.oy = this.h - Math.min(70, this.h * 0.14);
+    // leave ~70px under the target label for the floating toolbar
+    this.oy = this.h - Math.max(112, this.h * 0.17);
     const sx = this.w / (2 * (this.half + margin));
-    const sy = (this.oy - 34) / (this.height + 0.05);
+    const sy = (this.oy - 44) / (this.height + 0.05);
     this.scale = Math.max(20, Math.min(sx, sy));
     this.ox = this.w / 2;
   }
@@ -109,64 +111,67 @@ export class Renderer {
     const sZ = (z: number) => oy - z * scale;
     const railY = oy + 8;
 
-    // faint 10 cm ticks across the whole rail
-    ctx.strokeStyle = THEME.grid;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let k = -Math.floor(half * 10); k <= Math.floor(half * 10); k++) {
-      const px = sX(k / 10);
-      ctx.moveTo(px, 10);
-      ctx.lineTo(px, this.h - 10);
-    }
-    ctx.stroke();
-
-    // rail + end stops + usable-travel marks
+    // rail + end stops
     const stop = half + 0.05;
     ctx.strokeStyle = THEME.rail;
-    ctx.lineWidth = 6;
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(sX(-stop), railY);
     ctx.lineTo(sX(stop), railY);
     ctx.stroke();
     ctx.fillStyle = THEME.stop;
-    for (const s of [-stop, stop]) ctx.fillRect(sX(s) - 5, oy - 10, 10, 30);
-    const lim = 0.8 * half;
-    ctx.strokeStyle = THEME.target;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (const s of [-lim, lim]) { ctx.moveTo(sX(s), railY + 8); ctx.lineTo(sX(s), railY + 26); }
-    ctx.stroke();
-    ctx.fillStyle = THEME.dim;
-    ctx.font = "11px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("usable travel", sX(0), railY + 38);
-    ctx.fillText(`${(-lim).toFixed(2)} m`, sX(-lim), railY + 38);
-    ctx.fillText(`${lim.toFixed(2)} m`, sX(lim), railY + 38);
+    for (const s of [-stop, stop]) {
+      roundRect(ctx, sX(s) - 3, railY - 9, 6, 18, 2);
+      ctx.fill();
+    }
+
+    // faint 10 cm ticks just below the rail, longer at 0
     ctx.strokeStyle = THEME.dim;
+    ctx.globalAlpha = 0.35;
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(sX(0), railY + 8); ctx.lineTo(sX(0), railY + 20); ctx.stroke();
+    ctx.beginPath();
+    const kmax = Math.floor(half * 10);
+    for (let k = -kmax; k <= kmax; k++) {
+      const px = sX(k / 10);
+      ctx.moveTo(px, railY + 5);
+      ctx.lineTo(px, railY + (k === 0 ? 12 : 8));
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // usable-travel limit marks (subtle)
+    const lim = 0.8 * half;
+    ctx.strokeStyle = THEME.dim;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (const s of [-lim, lim]) { ctx.moveTo(sX(s), railY + 5); ctx.lineTo(sX(s), railY + 14); }
+    ctx.stroke();
 
     // target marker
     const tx = sX(st.xRef);
     ctx.strokeStyle = THEME.target;
     ctx.fillStyle = THEME.target;
     ctx.lineWidth = 1;
-    ctx.setLineDash([4, 5]);
+    ctx.globalAlpha = 0.35;
+    ctx.setLineDash([3, 5]);
     ctx.beginPath(); ctx.moveTo(tx, railY - 6); ctx.lineTo(tx, sZ(this.height)); ctx.stroke();
     ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
     ctx.beginPath();
-    ctx.moveTo(tx, railY + 4); ctx.lineTo(tx - 8, railY + 20); ctx.lineTo(tx + 8, railY + 20);
+    ctx.moveTo(tx, railY + 7); ctx.lineTo(tx - 5, railY + 16); ctx.lineTo(tx + 5, railY + 16);
     ctx.closePath(); ctx.fill();
+    ctx.font = FONT;
     ctx.textAlign = "center";
-    // Below the rail labels so it never collides with the pendulum tip.
-    ctx.fillText(`target ${(st.xRef * 100).toFixed(0)} cm`, tx, railY + 56);
+    ctx.globalAlpha = 0.75;
+    ctx.fillText(`target ${(st.xRef * 100).toFixed(0)} cm`, tx, railY + 30);
+    ctx.globalAlpha = 1;
 
     // controller's estimate (Kalman filter) as a faint ghost chain behind the true one
     const links = this.sim.rig.links;
     const n = links.length;
     const th = st.thetaEstimate;
     let ex = st.x, ez = 0;
-    ctx.globalAlpha = 0.4;
+    ctx.globalAlpha = 0.25;
     for (let i = 0; i < n; i++) {
       const a = th[i] ?? 0;
       const nx = ex + links[i]!.length * Math.sin(a);
@@ -181,15 +186,17 @@ export class Renderer {
     // cart
     const pts = this.sim.linkPoints();
     this.lastPts = pts;
-    const cw = 0.12 * scale, ch = 0.055 * scale;
+    const cw = 0.12 * scale, ch = 0.05 * scale;
     const cx = sX(pts[0]![0]);
     ctx.fillStyle = THEME.cart;
-    roundRect(ctx, cx - cw / 2, oy - ch / 2 + 2, cw, ch, 5);
+    roundRect(ctx, cx - cw / 2, oy - ch / 2 + 2, cw, ch, 4);
     ctx.fill();
     ctx.fillStyle = THEME.wheel;
+    ctx.globalAlpha = 0.6;
     for (const d of [-cw / 3, cw / 3]) {
       ctx.beginPath(); ctx.arc(cx + d, railY - 1, Math.max(3, ch / 4), 0, Math.PI * 2); ctx.fill();
     }
+    ctx.globalAlpha = 1;
 
     // true links + joints
     const lw = Math.max(4, 0.014 * scale);
@@ -204,9 +211,9 @@ export class Renderer {
     for (let i = 0; i < pts.length; i++) {
       const px = sX(pts[i]![0]), pz = sZ(pts[i]![1]);
       ctx.fillStyle = THEME.fg;
-      ctx.beginPath(); ctx.arc(px, pz, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(px, pz, 4.5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = THEME.bg;
-      ctx.beginPath(); ctx.arc(px, pz, 2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(px, pz, 1.8, 0, Math.PI * 2); ctx.fill();
     }
 
     // push arrows
@@ -221,17 +228,19 @@ export class Renderer {
       const len = 46 + 14 * (1 - alpha);
       const x0 = px - f.dir * 4, x1 = px + f.dir * len;
       ctx.globalAlpha = alpha;
-      ctx.strokeStyle = "#ffffff";
-      ctx.fillStyle = "#ffffff";
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = linkColor(f.link);
+      ctx.fillStyle = linkColor(f.link);
+      ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.moveTo(x0 - f.dir * 28, pz); ctx.lineTo(x1 - f.dir * 8, pz); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(x1, pz); ctx.lineTo(x1 - f.dir * 12, pz - 7); ctx.lineTo(x1 - f.dir * 12, pz + 7); ctx.closePath(); ctx.fill();
       ctx.globalAlpha = 1;
     }
 
-    // scale bar
-    const bar = 0.1 * scale, bx = 16, by = this.h - 18;
-    ctx.strokeStyle = THEME.fg; ctx.fillStyle = THEME.fg; ctx.lineWidth = 2;
+    // scale bar (skipped on narrow screens, where the control dock covers that corner)
+    if (this.w < 560) return;
+    const bar = 0.1 * scale, bx = 20, by = this.h - 22;
+    ctx.strokeStyle = THEME.dim; ctx.fillStyle = THEME.dim; ctx.lineWidth = 1;
+    ctx.font = "10px 'Geist Mono', ui-monospace, monospace";
     ctx.beginPath();
     ctx.moveTo(bx, by); ctx.lineTo(bx + bar, by);
     ctx.moveTo(bx, by - 4); ctx.lineTo(bx, by + 4);

@@ -13,19 +13,19 @@ interface KnobSpec {
 }
 
 const KNOBS: KnobSpec[] = [
-  { key: "frictionScale", label: "Joint friction", min: 0, max: 4, step: 0.1, fmt: (v) => `×${v.toFixed(1)}`,
+  { key: "frictionScale", label: "joint friction", min: 0, max: 4, step: 0.1, fmt: (v) => `×${v.toFixed(1)}`,
     tip: "How sticky the hinges are. Real bearings have stiction, which makes the pendulum wander a few degrees. 0 is a perfect frictionless joint." },
-  { key: "massScale", label: "Link mass", min: 0.7, max: 1.3, step: 0.01, fmt: (v) => `×${v.toFixed(2)}`,
+  { key: "massScale", label: "link mass", min: 0.7, max: 1.3, step: 0.01, fmt: (v) => `×${v.toFixed(2)}`,
     tip: "Makes the real rods heavier or lighter than the controller believes. The controller keeps its original numbers, so this is pure model error." },
-  { key: "sensorNoiseScale", label: "Sensor noise", min: 0, max: 5, step: 0.1, fmt: (v) => `×${v.toFixed(1)}`,
+  { key: "sensorNoiseScale", label: "sensor noise", min: 0, max: 5, step: 0.1, fmt: (v) => `×${v.toFixed(1)}`,
     tip: "Jitter on the angle encoders. More noise makes the estimate (the faint ghost chain) shakier and the cart twitchier." },
-  { key: "encoderBits", label: "Encoder resolution", min: 10, max: 21, step: 1, fmt: (v) => `${v.toFixed(0)} bit`,
+  { key: "encoderBits", label: "encoder resolution", min: 10, max: 21, step: 1, fmt: (v) => `${v.toFixed(0)} bit`,
     tip: "How finely each joint angle is measured. Fewer bits means coarser steps; at 10 bits the top links are nearly invisible to the controller." },
-  { key: "extraDelaySteps", label: "Extra latency", min: 0, max: 10, step: 1, fmt: (v) => `${v.toFixed(0)} ms`,
+  { key: "extraDelaySteps", label: "extra latency", min: 0, max: 10, step: 1, fmt: (v) => `${v.toFixed(0)} ms`,
     tip: "Added delay between measuring and acting, on top of the 1 ms the controller already knows about. Delay is the classic way to lose balance." },
-  { key: "driveBandwidthScale", label: "Drive bandwidth", min: 0.3, max: 2, step: 0.05, fmt: (v) => `×${v.toFixed(2)}`,
+  { key: "driveBandwidthScale", label: "drive bandwidth", min: 0.3, max: 2, step: 0.05, fmt: (v) => `×${v.toFixed(2)}`,
     tip: "How quickly the servo drive follows the acceleration command. Lower means a sluggish motor that lags behind what the controller asks for." },
-  { key: "accelLimit", label: "Accel limit", min: 5, max: 60, step: 1, fmt: (v) => `${v.toFixed(0)} m/s²`,
+  { key: "accelLimit", label: "accel limit", min: 5, max: 60, step: 1, fmt: (v) => `${v.toFixed(0)} m/s²`,
     tip: "The most the cart is allowed to accelerate. A weaker drive can't make the large, fast moves a quadruple pendulum sometimes needs." },
 ];
 
@@ -54,6 +54,7 @@ export class Panel {
     const speed = $<HTMLInputElement>("speed");
     const speedVal = $("speed-val");
     speed.addEventListener("input", () => {
+      fill(speed);
       this.speed = parseFloat(speed.value);
       speedVal.textContent = `${this.speed.toFixed(2)}×`;
       cb.onSpeed(this.speed);
@@ -61,15 +62,19 @@ export class Panel {
     const tap = $<HTMLInputElement>("tap");
     const tapVal = $("tap-val");
     tap.addEventListener("input", () => {
+      fill(tap);
       this.tapForce = parseFloat(tap.value);
       tapVal.textContent = `${this.tapForce.toFixed(2)} N`;
       cb.onTapForce(this.tapForce);
     });
-    for (const i of [speed, tap]) i.addEventListener("change", () => i.blur());
+    for (const i of [speed, tap]) {
+      fill(i);
+      i.addEventListener("change", () => i.blur());
+    }
     $("knobs-reset").addEventListener("click", () => cb.onKnobsReset());
 
     for (const spec of KNOBS) {
-      const wrap = el("div", "knob");
+      const wrap = el("div", "field");
       const row = el("div", "row");
       const tip = el("button", "tip", "?");
       tip.type = "button";
@@ -86,6 +91,7 @@ export class Panel {
       input.addEventListener("input", () => {
         const v = parseFloat(input.value);
         out.textContent = spec.fmt(v);
+        fill(input);
         this.sim?.setKnobs({ [spec.key]: v } as Partial<RealityKnobs>);
       });
       input.addEventListener("change", () => input.blur());
@@ -118,13 +124,13 @@ export class Panel {
     this.syncKnobs();
     this.pushRow.replaceChildren();
     sim.rig.links.forEach((_, i) => {
-      const row = el("div", "push-item");
-      const name = el("span", "name");
-      const sw = el("span", "swatch");
-      sw.style.background = linkColor(i);
-      name.append(sw, document.createTextNode(`Push link ${i + 1}`));
-      const l = el("button", "btn", "←");
-      const r = el("button", "btn", "→");
+      const row = el("div", "push");
+      const name = el("span", "n");
+      const dot = el("i", "dot");
+      dot.style.background = linkColor(i);
+      name.append(dot, document.createTextNode(String(i + 1)));
+      const l = el("button", "", "‹");
+      const r = el("button", "", "›");
       l.type = r.type = "button";
       l.title = `Push link ${i + 1} left (Shift+${i + 1})`;
       r.title = `Push link ${i + 1} right (${i + 1})`;
@@ -132,7 +138,7 @@ export class Panel {
       r.setAttribute("aria-label", r.title);
       l.addEventListener("click", () => this.cb.onPush(i, -1));
       r.addEventListener("click", () => this.cb.onPush(i, 1));
-      row.append(name, l, r);
+      row.append(l, name, r);
       this.pushRow.append(row);
     });
   }
@@ -150,6 +156,14 @@ export class Panel {
       if (v > spec.max) input.max = String(v);
       input.value = String(v);
       out.textContent = spec.fmt(v);
+      fill(input);
     }
   }
+}
+
+/** Paint the filled part of a range track (read by the CSS via --p). */
+function fill(input: HTMLInputElement): void {
+  const min = parseFloat(input.min), max = parseFloat(input.max);
+  const p = max > min ? (parseFloat(input.value) - min) / (max - min) : 0;
+  input.style.setProperty("--p", `${(p * 100).toFixed(1)}%`);
 }

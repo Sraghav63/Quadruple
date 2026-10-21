@@ -29,12 +29,12 @@ export class Hud {
     this.angleBox.replaceChildren();
     this.angleEls = [];
     sim.rig.links.forEach((_, i) => {
-      const row = el("div");
-      const sw = el("span", "swatch");
-      sw.style.background = linkColor(i);
-      row.append(sw, el("span", "k", `link ${i + 1}`));
+      const row = el("span", "key");
+      const dot = el("i", "dot");
+      dot.style.background = linkColor(i);
+      row.title = `Link ${i + 1}`;
       const v = el("span", "v", "0.0°");
-      row.append(v);
+      row.append(dot, v);
       this.angleBox.append(row);
       this.angleEls.push(v);
     });
@@ -54,10 +54,10 @@ export class Hud {
     for (let i = 0; i < this.angleEls.length; i++) {
       setText(this.angleEls[i]!, `${wrapDeg((st.theta[i] ?? 0) * RAD2DEG).toFixed(1)}°`);
     }
-    let text = "BALANCING", cls = "badge ok";
-    if (st.fallen) { text = "FALLEN"; cls = "badge bad"; }
-    else if (st.hitRailEnd) { text = "RAIL END"; cls = "badge warn"; }
-    else if (!st.controllerEnabled) { text = "CONTROLLER OFF"; cls = "badge warn"; }
+    let text = "balancing", cls = "pill ok";
+    if (st.fallen) { text = "fallen"; cls = "pill bad"; }
+    else if (st.hitRailEnd) { text = "hit rail end"; cls = "pill warn"; }
+    else if (!st.controllerEnabled) { text = "controller off"; cls = "pill warn"; }
     setText(this.status, text);
     if (this.status.className !== cls) this.status.className = cls;
     setText(this.perf, perfText);
