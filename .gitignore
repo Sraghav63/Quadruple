@@ -5,8 +5,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-runs/
-models/
 videos/
 MUJOCO_LOG.TXT
 viewer3d/trajectory.json
+*.egg-info/

@@ -1,11 +1,3 @@
-"""Quadruple inverted pendulum RL environment."""
+"""Realistic simulation and LQR control of an n-link inverted pendulum on a cart."""
 
-__all__ = ["QuadPendulumEnv"]
-
-
-def __getattr__(name: str):
-    if name == "QuadPendulumEnv":
-        from quad_pendulum.env import QuadPendulumEnv
-
-        return QuadPendulumEnv
-    raise AttributeError(name)
+__all__ = []

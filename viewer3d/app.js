@@ -50,7 +50,7 @@ grid.position.z = -0.085;
 scene.add(grid);
 
 const railMaterial = new THREE.MeshStandardMaterial({ color: 0x1c2023, roughness: 0.42, metalness: 0.2 });
-const railGeometry = new THREE.BoxGeometry(6.2, 0.035, 0.04);
+const railGeometry = new THREE.BoxGeometry(2 * trajectory.railHalfLength + 0.3, 0.035, 0.04);
 for (const y of [-0.26, 0.26]) {
   const rail = new THREE.Mesh(railGeometry, railMaterial);
   rail.position.set(0, y, 0.02);
@@ -58,7 +58,7 @@ for (const y of [-0.26, 0.26]) {
   scene.add(rail);
 }
 
-for (const x of [-2.4, 0, 2.4]) {
+for (const x of [-trajectory.railHalfLength, 0, trajectory.railHalfLength]) {
   const marker = new THREE.Mesh(
     new THREE.BoxGeometry(0.025, 0.7, 0.012),
     new THREE.MeshStandardMaterial({ color: x === 0 ? 0x23282b : 0xb73b30 }),
@@ -109,7 +109,9 @@ cart.add(pivot);
 
 const linkColors = [0xd34b35, 0x26925e, 0xe5ac2f, 0x7553aa];
 const linkGroups = [];
+const linkLengths = trajectory.linkLengths;
 for (let index = 0; index < trajectory.links; index += 1) {
+  const linkLength = linkLengths[index];
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({
     color: linkColors[index],
@@ -117,14 +119,14 @@ for (let index = 0; index < trajectory.links; index += 1) {
     metalness: 0.05,
   });
 
-  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, trajectory.linkLength, 32), material);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, linkLength, 32), material);
   rod.rotation.x = Math.PI / 2;
-  rod.position.z = trajectory.linkLength / 2;
+  rod.position.z = linkLength / 2;
   rod.castShadow = true;
   group.add(rod);
 
   const tip = new THREE.Mesh(new THREE.SphereGeometry(0.052, 32, 16), material);
-  tip.position.z = trajectory.linkLength;
+  tip.position.z = linkLength;
   tip.castShadow = true;
   group.add(tip);
 
@@ -144,31 +146,34 @@ let frameIndex = 0;
 const frames = trajectory.frames;
 status.textContent = `${trajectory.control}, ${trajectory.links} link${trajectory.links === 1 ? "" : "s"}`;
 
-function updateMechanism(frame) {
-  cart.position.x = frame.cartX;
-  cart.position.y = 0;
-  cart.position.z = 0;
+const pivotHeight = 0.18;
 
-  let currentX = frame.cartX;
-  let currentZ = 0.18;
-  let cumulativeAngle = 0;
+function updateMechanism(frame) {
+  cart.position.set(frame.cartX, 0, 0);
+
+  const pts = frame.points;
+  const zOffset = pivotHeight - pts[0][1];
   for (let index = 0; index < trajectory.links; index += 1) {
-    cumulativeAngle += frame.angles[index];
+    const [x0, z0] = pts[index];
+    const [x1, z1] = pts[index + 1];
     const group = linkGroups[index];
-    group.position.set(currentX, 0, currentZ);
-    group.rotation.set(0, cumulativeAngle, 0);
-    currentX += Math.sin(cumulativeAngle) * trajectory.linkLength;
-    currentZ += Math.cos(cumulativeAngle) * trajectory.linkLength;
+    group.position.set(x0, 0, z0 + zOffset);
+    group.rotation.set(0, Math.atan2(x1 - x0, z1 - z0), 0);
   }
 
   resetFlash.position.x = frame.cartX;
   resetFlash.material.opacity = frame.reset ? 0.55 : Math.max(0, resetFlash.material.opacity - 0.04);
 }
 
-function animate() {
+let playStart = null;
+
+function animate(now) {
   requestAnimationFrame(animate);
+  // Pick the frame from wall-clock time so playback is real time at any refresh rate.
+  if (playStart === null) playStart = now ?? 0;
+  const fps = trajectory.fps ?? 60;
+  frameIndex = Math.floor((((now ?? 0) - playStart) / 1000) * fps) % frames.length;
   updateMechanism(frames[frameIndex]);
-  frameIndex = (frameIndex + 1) % frames.length;
   controls.update();
   renderer.render(scene, camera);
 }
