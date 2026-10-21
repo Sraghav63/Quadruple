@@ -46,6 +46,24 @@ This also refreshes `web/test/golden/*`. Rerun it after changing
 The only artifact to deploy is `web/dist/`, produced by `npm run build`.
 No special server headers or rewrites are needed.
 
+### 0. Docker / Coolify
+
+`web/Dockerfile` builds the site with Node 22 and serves `dist/` with nginx on
+port 80 (`web/nginx.conf`). Test it locally:
+
+```bash
+docker build -t quad-pendulum web
+docker run --rm -p 8080:80 quad-pendulum   # open http://localhost:8080
+```
+
+In Coolify, don't use the Nixpacks build pack: it has no start command for a
+static site, and its Nix setup step can fail before your code is built. Set:
+
+- **Build Pack:** Dockerfile
+- **Base Directory:** `/web`
+- **Dockerfile Location:** `/Dockerfile`
+- **Ports Exposes:** `80`
+
 ### 1. Any static host
 
 Run `npm run build` and upload the contents of `web/dist/` to any static file
