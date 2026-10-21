@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1016" />
+    <meta name="description" content="Real-time simulation of a quadruple inverted pendulum balanced on a cart by an LQR + Kalman controller." />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>Quadruple Inverted Pendulum</title>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <h1>Quadruple Inverted Pendulum</h1>
+        <p class="sub">Four rods on a servo cart, balanced in real time by an LQR + Kalman controller.</p>
+      </div>
+      <a id="repo-link" class="repo" target="_blank" rel="noopener" hidden>GitHub</a>
+    </header>
+
+    <main class="layout">
+      <section class="stage">
+        <div class="card canvas-card">
+          <div class="stage-wrap" id="stage-wrap">
+            <canvas id="scene" aria-label="Pendulum simulation. Drag to move the cart target, tap a link to push it."></canvas>
+            <div id="fallen" class="fallen" hidden>
+              <div class="fallen-title">FALLEN</div>
+              <div class="fallen-sub">press R or tap Reset</div>
+              <button id="fallen-reset" class="btn primary">Reset</button>
+            </div>
+            <div id="load-error" class="load-error" hidden></div>
+            <div class="canvas-hint">drag = move target &middot; tap a link = push it</div>
+          </div>
+          <div class="toolbar" id="toolbar">
+            <button id="btn-pause" class="btn" title="Pause / resume (P)">Pause</button>
+            <button id="btn-reset" class="btn" title="Reset (R)">Reset</button>
+            <button id="btn-ctrl" class="btn toggle on" title="Toggle the controller (Space)">Controller: ON</button>
+            <span class="spacer"></span>
+            <button id="btn-left" class="btn" title="Move target 5 cm left (Left / A)" aria-label="Target left">&#9664; target</button>
+            <button id="btn-right" class="btn" title="Move target 5 cm right (Right / D)" aria-label="Target right">target &#9654;</button>
+          </div>
+        </div>
+
+        <div class="card plots">
+          <div class="plot-box">
+            <div class="plot-title">Link angles <span class="unit">deg, absolute</span></div>
+            <canvas id="plot-angles"></canvas>
+          </div>
+          <div class="plot-box">
+            <div class="plot-title">Cart position <span class="unit">m</span>
+              <span class="legend"><i style="background:var(--cart)"></i>x <i class="dash"></i>target</span>
+            </div>
+            <canvas id="plot-x"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <section class="card">
+          <h2>Rig</h2>
+          <label class="field">
+            <span>Preset</span>
+            <select id="preset"></select>
+          </label>
+          <p id="preset-desc" class="muted small"></p>
+          <div class="field">
+            <span>Speed <b id="speed-val">1.00&times;</b></span>
+            <input id="speed" type="range" min="0.1" max="2" step="0.05" value="1" />
+          </div>
+          <div class="field">
+            <span>Tap strength <b id="tap-val">0.08 N</b>
+              <button class="tip" type="button" data-tip="Force of a 20 ms tap on a link. A quadruple pendulum only tolerates light taps (about 0.1 N on the top link).">?</button>
+            </span>
+            <input id="tap" type="range" min="0.02" max="0.5" step="0.01" value="0.08" />
+          </div>
+          <div id="push-row" class="push-row"></div>
+        </section>
+
+        <section class="card">
+          <h2>Live readout</h2>
+          <div class="statusline">
+            <span id="status" class="badge ok">BALANCING</span>
+            <span id="perf" class="muted small"></span>
+          </div>
+          <div class="hud-grid" id="hud-grid">
+            <div><span class="k">t</span><span id="h-t" class="v">0.00 s</span></div>
+            <div><span class="k">x</span><span id="h-x" class="v">0.000 m</span></div>
+            <div><span class="k">v</span><span id="h-v" class="v">0.00 m/s</span></div>
+            <div><span class="k">a</span><span id="h-a" class="v">0.0 m/s&sup2;</span></div>
+          </div>
+          <div class="bar-row">
+            <span class="k">drive force</span><span id="h-f" class="v small">0 / 150 N</span>
+            <div class="bar" id="bar-f"><i></i></div>
+          </div>
+          <div class="bar-row">
+            <span class="k">accel command</span><span id="h-c" class="v small">0 / 30 m/s&sup2;</span>
+            <div class="bar" id="bar-c"><i></i></div>
+          </div>
+          <div class="angles" id="angles"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Reality</h2>
+            <button id="knobs-reset" class="btn small">Reset knobs</button>
+          </div>
+          <p class="muted small">The controller still believes the original values. Changing these shows how a real build differs from its model.</p>
+          <div id="knobs"></div>
+        </section>
+
+        <details class="card about" id="about">
+          <summary>What am I looking at?</summary>
+          <div id="about-body" class="about-body"></div>
+        </details>
+      </aside>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

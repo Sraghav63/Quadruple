@@ -1,0 +1,27 @@
+[
+  {
+    "id": "quad",
+    "name": "Quadruple (4 links)",
+    "description": "The build target: 4 x 0.35 m, 12 mm steel rod."
+  },
+  {
+    "id": "links3",
+    "name": "Triple (3 links)",
+    "description": "Same links, fewer of them."
+  },
+  {
+    "id": "links2",
+    "name": "Double (2 links)",
+    "description": "Same links, fewer of them."
+  },
+  {
+    "id": "links1",
+    "name": "Single (1 link)",
+    "description": "Same links, fewer of them."
+  },
+  {
+    "id": "quad-short",
+    "name": "Quadruple, 0.30 m links",
+    "description": "Shorter, faster, less robust (85% vs ~97% in Monte Carlo)."
+  }
+]

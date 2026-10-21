@@ -43,6 +43,14 @@ python scripts/run_realtime.py
 Options: `--speed` (0.1-2), `--seed`, `--tilt-deg` (initial random tilt),
 `--no-controller`, `--headless SECONDS` (no window, prints a summary).
 
+## Website
+
+The browser version lives in [`web/`](web/README.md) (Vite + TypeScript, no
+backend). From `web/`: `npm install`, then `npm run dev` for a local server,
+`npm test` for the parity tests, and `npm run build` to write static files to
+`web/dist/`. Deploy recipes for Netlify, Vercel, GitHub Pages and Cloudflare
+Pages are in the web README.
+
 ## Scripts
 
 - `scripts/run_realtime.py`: interactive real-time viewer (above).
