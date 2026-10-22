@@ -12,7 +12,9 @@ import webbrowser
 from pathlib import Path
 
 from quad_pendulum.params import RigParams, parse_configuration
+from quad_pendulum.presets import preset_rig
 from quad_pendulum.sim import Simulation
+from quad_pendulum.transition import DATA_DIR, TransitionLibrary
 
 ROOT = Path(__file__).resolve().parents[1]
 VIEWER_DIR = ROOT / "viewer3d"
@@ -36,32 +38,62 @@ class ReusableTCPServer(socketserver.TCPServer):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seconds", type=float, default=10.0)
+    parser.add_argument(
+        "--seconds", type=float, default=None, help="simulated time (default 10, or 30 with --goto)"
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--config",
         default=None,
         metavar="UUUD",
-        help="links balanced up (U) or down (D), bottom link first; default all up",
+        help="starting configuration: links balanced up (U) or down (D), bottom link first; "
+        "default all up (all down with --goto)",
     )
+    parser.add_argument(
+        "--goto",
+        default=None,
+        metavar="CFG",
+        help="request this configuration at t = 0.5 s and show the planned swing; the "
+        "tap/reference script is skipped",
+    )
+    parser.add_argument("--preset", default="quad", help="rig preset (default quad)")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--export-only", action="store_true")
     args = parser.parse_args()
     try:
-        args.config = parse_configuration(args.config, RigParams().n_links)
-    except ValueError as exc:
+        rig = preset_rig(args.preset)
+        if args.goto is not None:
+            args.goto = parse_configuration(args.goto, rig.n_links)
+            if args.config is None:
+                args.config = "D" * rig.n_links
+        args.config = parse_configuration(args.config, rig.n_links)
+    except (KeyError, ValueError) as exc:
         parser.error(str(exc))
+    if args.seconds is None:
+        args.seconds = 30.0 if args.goto else 10.0
     return args
 
 
-def generate_trajectory(seconds: float, seed: int, configuration: str | None = None) -> dict:
-    rig = RigParams()
-    sim = Simulation(rig, seed=seed, configuration=configuration)
+def generate_trajectory(
+    seconds: float,
+    seed: int,
+    configuration: str | None = None,
+    goto: str | None = None,
+    preset: str = "quad",
+) -> dict:
+    rig = preset_rig(preset)
+    library = TransitionLibrary(DATA_DIR / preset) if goto else None
+    sim = Simulation(rig, seed=seed, configuration=configuration, transitions=library)
     sim.reset(random_tilt_deg=0.05)
-    script = sorted(SCRIPT, key=lambda item: item[0])
+    script = [] if goto else sorted(SCRIPT, key=lambda item: item[0])
+    requested = goto is None
     frames = []
     for frame in range(int(seconds * FPS)):
+        if not requested and sim.t >= 0.5:
+            requested = True
+            if not sim.request_configuration(goto):
+                raise SystemExit(f"no stored transition route {sim.configuration} -> {goto}")
         while script and script[0][0] <= sim.t:
             _, action, arg = script.pop(0)
             if action == "ref":
@@ -86,7 +118,8 @@ def generate_trajectory(seconds: float, seed: int, configuration: str | None = N
         "linkLengths": [link.length for link in rig.links],
         "railHalfLength": rig.cart.rail_half_length,
         "fps": FPS,
-        "control": "lqr",
+        "control": "lqr" if goto is None else f"swing {configuration} to {goto}, then lqr",
+        "arrived": bool(goto is None or (sim.mode == "hold" and sim.configuration == goto)),
         "fallen": bool(sim.fallen),
         "frames": frames,
     }
@@ -105,11 +138,15 @@ def bind_server(handler, preferred_port: int) -> ReusableTCPServer:
 def main() -> None:
     args = parse_args()
     VIEWER_DIR.mkdir(parents=True, exist_ok=True)
-    trajectory = generate_trajectory(args.seconds, args.seed, args.config)
+    trajectory = generate_trajectory(
+        args.seconds, args.seed, args.config, args.goto, args.preset
+    )
     TRAJECTORY_PATH.write_text(json.dumps(trajectory), encoding="utf-8")
     print(f"Wrote {TRAJECTORY_PATH} ({len(trajectory['frames'])} frames)")
     if trajectory["fallen"]:
         print("Warning: the pendulum fell during the run.")
+    elif not trajectory["arrived"]:
+        print("Warning: the requested configuration was not reached; try --seconds longer.")
 
     if args.export_only:
         return

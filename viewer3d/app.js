@@ -142,18 +142,27 @@ resetFlash.rotation.x = Math.PI / 2;
 resetFlash.position.z = 0.02;
 scene.add(resetFlash);
 
-// Links hanging below the rail: aim the camera at the middle of the chain and hide the floor.
-const hangs = (trajectory.configuration ?? "").includes("D");
-if (hangs) {
-  const zs = trajectory.frames[0].points.map((point) => point[1] - trajectory.frames[0].points[0][1]);
-  controls.target.set(0, 0, 0.18 + (Math.min(0, ...zs) + Math.max(0, ...zs)) / 2);
+// Aim the camera at the middle of the whole motion; drop the floor if any link goes below the rail.
+const frames = trajectory.frames;
+let zLow = 0;
+let zHigh = 0;
+for (const frame of frames) {
+  for (const point of frame.points) {
+    const z = point[1] - frame.points[0][1];
+    zLow = Math.min(zLow, z);
+    zHigh = Math.max(zHigh, z);
+  }
+}
+if (zLow < -0.05) {
+  controls.target.set(0, 0, 0.18 + (zLow + zHigh) / 2);
   controls.maxPolarAngle = Math.PI;
   floor.visible = false;
   grid.visible = false;
+  const reach = Math.max(zHigh - zLow, 1);
+  camera.position.set(2.9, -5.0, 2.4).setLength(Math.max(6, reach * 3.2)).add(controls.target);
 }
 
 let frameIndex = 0;
-const frames = trajectory.frames;
 status.textContent = `${trajectory.control}, ${trajectory.links} link${trajectory.links === 1 ? "" : "s"}`;
 
 const pivotHeight = 0.18;

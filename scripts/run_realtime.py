@@ -14,8 +14,10 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import numpy as np
 
-from quad_pendulum.params import RigParams, all_configurations, parse_configuration, wrap_angle
+from quad_pendulum.params import all_configurations, parse_configuration, wrap_angle
+from quad_pendulum.presets import preset_rig
 from quad_pendulum.sim import Simulation
+from quad_pendulum.transition import DATA_DIR, TransitionLibrary, Trajectory
 
 PUSH_FORCE = 0.1  # N, horizontal tap at the top of a link (0.2 N already topples links 3-4)
 PUSH_DURATION = 0.02  # s
@@ -49,56 +51,120 @@ def parse_args() -> argparse.Namespace:
         "--config",
         default=None,
         metavar="UUUD",
-        help="which links to balance up (U) or down (D), bottom link first; default all up. "
-        "C / Shift+C cycles configurations in the window; switching resets the run "
-        "(swing-up between equilibria is not implemented)",
+        help="starting configuration: links balanced up (U) or down (D), bottom link first; "
+        "default all down (the rig at rest)",
     )
+    p.add_argument(
+        "--goto",
+        default=None,
+        metavar="CFG",
+        help="request this configuration at the start (real-time swing along the stored "
+        "transitions); in the window use 5-8 / C to pick a target and Enter to go",
+    )
+    p.add_argument("--preset", default="quad", help="rig preset: quad, links3, links2, links1, ...")
     p.add_argument("--no-controller", action="store_true")
     p.add_argument("--headless", type=float, metavar="SECONDS", help="no window; print a summary")
     p.add_argument("--max-seconds", type=float, help=argparse.SUPPRESS)
     args = p.parse_args()
     try:
-        args.config = parse_configuration(args.config, RigParams().n_links)
-    except ValueError as exc:
+        args.rig = preset_rig(args.preset)
+        n = args.rig.n_links
+        args.config = parse_configuration(args.config or "D" * n, n)
+        if args.goto is not None:
+            args.goto = parse_configuration(args.goto, n)
+    except (KeyError, ValueError) as exc:
         p.error(str(exc))
     args.speed = float(np.clip(args.speed, 0.1, 2.0))
     return args
 
 
-def make_sim(args: argparse.Namespace, configuration: str | None = None) -> Simulation:
-    sim = Simulation(RigParams(), seed=args.seed, configuration=configuration or args.config)
+def load_library(preset: str) -> TransitionLibrary | None:
+    """The stored transitions of a preset; None (with a message) if there are none."""
+    directory = DATA_DIR / preset
+    files = sorted(directory.glob("*-*.json")) if directory.is_dir() else []
+    if not files:
+        print(
+            f"No transition library for preset '{preset}' in {directory}; balancing only. "
+            "Generate it with scripts/plan_transitions.py."
+        )
+        return None
+    if (directory / "index.json").exists():
+        return TransitionLibrary(directory)
+    print(f"{directory} has no index.json (library still being planned?); loading its files.")
+    return TransitionLibrary(trajectories=[Trajectory.load(f) for f in files])
+
+
+def make_sim(args: argparse.Namespace, library: TransitionLibrary | None) -> Simulation:
+    sim = Simulation(
+        args.rig, seed=args.seed, configuration=args.config, transitions=library
+    )
     sim.reset(random_tilt_deg=args.tilt_deg)
     sim.controller_enabled = not args.no_controller
     return sim
 
 
+def reference_theta(sim: Simulation) -> np.ndarray:
+    """Where the links should be now: the nominal swing during a transition, else the equilibrium."""
+    if sim.mode == "transition" and sim.tracker is not None:
+        n = sim.rig.n_links
+        return sim.tracker.nominal[3 : 3 + n, min(sim.tracker.k, sim.tracker.steps)]
+    return sim.theta_eq
+
+
 def deviation_deg(sim: Simulation, theta) -> np.ndarray:
-    """Link angles relative to the target equilibrium, in degrees."""
-    return np.rad2deg(wrap_angle(np.asarray(theta) - sim.theta_eq))
+    """Link angles relative to the target equilibrium (or nominal swing), in degrees."""
+    return np.rad2deg(wrap_angle(np.asarray(theta) - reference_theta(sim)))
 
 
 def run_headless(args: argparse.Namespace) -> int:
-    sim = make_sim(args)
+    library = load_library(args.preset) if args.goto else None
+    sim = make_sim(args, library)
     rate = round(sim.rig.timing.control_rate)
-    max_theta = max_force = 0.0
+    max_theta = max_force = worst_nominal = 0.0
+    arrived_at = None
     print(f"configuration {sim.configuration} (bottom link first, U up / D down)")
+    if args.goto:
+        if not sim.request_configuration(args.goto):
+            print(f"cannot go from {sim.configuration} to {args.goto}: no stored route")
+            return 2
+        route = " ".join(f"{a}>{b}" for a, b in sim.route) or "(already there)"
+        print(f"going to {args.goto} via {route}")
     for second in range(1, int(np.ceil(args.headless)) + 1):
         for _ in range(min(rate, round((args.headless - (second - 1)) * rate))):
             sim.step()
             st = sim.status()
-            max_theta = max(max_theta, float(np.max(np.abs(deviation_deg(sim, st["theta"])))))
+            dev = float(np.max(np.abs(deviation_deg(sim, st["theta"]))))
+            max_theta = max(max_theta, dev)
+            if sim.mode == "transition":
+                worst_nominal = max(worst_nominal, dev)
             max_force = max(max_force, abs(float(sim.plant.state()["force"])))
+            if args.goto and arrived_at is None and sim.mode == "hold" and not sim.route:
+                arrived_at = sim.t
+            if sim.fallen:
+                break
+        extra = ""
+        if sim.mode == "transition":
+            extra = f"  edge {sim.route[0][0]}>{sim.route[0][1]} {st['transition_progress']:4.0%}"
         print(
-            f"t={sim.t:6.2f} s  x={st['x']:+.3f} m  max|dtheta|={max_theta:6.3f} deg  "
-            f"max|force|={max_force:6.2f} N",
+            f"t={sim.t:6.2f} s  {sim.mode:10s} x={st['x']:+.3f} m  "
+            f"max|dtheta|={max_theta:7.3f} deg  max|force|={max_force:6.2f} N{extra}",
             flush=True,
         )
         max_theta = max_force = 0.0
         if sim.fallen:
             break
     if sim.fallen:
-        print(f"FALLEN (configuration {sim.configuration})")
+        print(f"FALLEN (configuration {sim.configuration}, mode {sim.mode})")
         return 1
+    if args.goto:
+        if arrived_at is None or sim.configuration != args.goto:
+            print(f"DID NOT ARRIVE at {args.goto} (now {sim.configuration}, mode {sim.mode})")
+            return 1
+        print(
+            f"ARRIVED at {args.goto} after {arrived_at:.2f} s; worst deviation from the "
+            f"nominal swing {worst_nominal:.2f} deg"
+        )
+        return 0
     print(f"BALANCED (configuration {sim.configuration})")
     return 0
 
@@ -109,12 +175,18 @@ class Viewer:
 
         self.pg = pygame
         self.args = args
-        self.sim = make_sim(args)
-        self.configs = all_configurations(RigParams().n_links)
+        self.library = load_library(args.preset)
+        self.sim = make_sim(args, self.library)
+        self.configs = all_configurations(self.sim.rig.n_links)
         self.rig = self.sim.rig
+        self.pending = args.goto or self.sim.configuration  # target being chosen
+        self.message = ""
+        self.message_until = 0.0
+        self.view = None  # eased (half width, z max, z min) of the scene
+        self.max_lengths = float(sum(link.length for link in self.rig.links))
         self.dt = self.rig.control_dt
         pygame.init()
-        pygame.display.set_caption("Quadruple Inverted Pendulum – LQR")
+        pygame.display.set_caption("Quadruple Inverted Pendulum – real time")
         self.screen = pygame.display.set_mode((1200, 760), pygame.RESIZABLE)
         pygame.key.set_repeat(250, 60)
         self.font = self.sysfont(15)
@@ -145,32 +217,61 @@ class Viewer:
         self._next_sample = 0.0
         self.acc = 0.0
 
+    def notify(self, text: str, seconds: float = 4.0) -> None:
+        self.message, self.message_until = text, time.perf_counter() + seconds
+
     def reset(self) -> None:
+        """Back to all links hanging at rest."""
+        self.sim.set_configuration("D" * self.rig.n_links)
         self.sim.reset(random_tilt_deg=START_TILT_DEG)
         self.sim.set_reference(0.0)
+        self.pending = self.sim.configuration
         self.clear_run()
 
-    def cycle_configuration(self, step: int) -> None:
-        """Rebuild the simulation for another equilibrium; this is a reset, not a transition."""
-        i = self.configs.index(self.sim.configuration)
-        enabled = self.sim.controller_enabled
-        self.sim = make_sim(self.args, self.configs[(i + step) % len(self.configs)])
-        self.sim.controller_enabled = enabled
-        self.rig = self.sim.rig
-        self.clear_run()
+    def request(self, goal: str) -> None:
+        sim = self.sim
+        if sim.fallen:
+            self.notify("fallen: press R to reset")
+        elif self.library is None:
+            self.notify("no transition library: run scripts/plan_transitions.py")
+        elif sim.mode == "transition":
+            self.notify("wait for the current swing to finish")
+        elif goal == sim.configuration and sim.mode == "hold":
+            self.notify(f"already at {goal}")
+        elif sim.request_configuration(goal):
+            self.notify(f"going to {goal}")
+        else:
+            self.notify(f"no stored route {sim.configuration} to {goal}")
+
+    def toggle_link(self, i: int) -> None:
+        if i < self.rig.n_links:
+            flipped = "U" if self.pending[i] == "D" else "D"
+            self.pending = self.pending[:i] + flipped + self.pending[i + 1 :]
+
+    def cycle_target(self, step: int) -> None:
+        i = self.configs.index(self.pending)
+        self.pending = self.configs[(i + step) % len(self.configs)]
 
     def advance(self, wall_dt: float) -> None:
         if self.paused or self.sim.fallen:
             return
+        was_transition = self.sim.mode == "transition"
         self.acc += min(wall_dt, MAX_CATCHUP) * self.args.speed
         n = int(self.acc / self.dt)
         self.acc -= n * self.dt
         for _ in range(n):
-            self.sim.step()
+            try:
+                self.sim.step()
+            except (KeyError, OSError, ValueError) as exc:  # missing or unreadable edge file
+                self.sim.mode, self.sim.route, self.sim.tracker = "hold", [], None
+                self.notify(f"transition unavailable ({type(exc).__name__}): holding", 8.0)
+                break
             if self.sim.t >= self._next_sample:
                 self._next_sample = self.sim.t + PLOT_EVERY
                 st = self.sim.status()
-                self.hist.append((st["t"], st["x"], st["x_ref"], deviation_deg(self.sim, st["theta"])))
+                self.hist.append(
+                    (st["t"], st["x"], st["x_ref"], deviation_deg(self.sim, st["theta"]))
+                )
             if self.sim.fallen:
                 break
         while self.hist and self.hist[0][0] < self.sim.t - PLOT_SECONDS:
@@ -198,10 +299,18 @@ class Viewer:
             elif k == pg.K_r:
                 self.reset()
             elif k == pg.K_c:
-                self.cycle_configuration(-1 if ev.mod & pg.KMOD_SHIFT else 1)
+                self.cycle_target(-1 if ev.mod & pg.KMOD_SHIFT else 1)
+            elif pg.K_5 <= k <= pg.K_8:
+                self.toggle_link(k - pg.K_5)
+            elif k in (pg.K_RETURN, pg.K_KP_ENTER, pg.K_g):
+                self.request(self.pending)
+            elif k == pg.K_u:
+                self.pending = "U" * self.rig.n_links
+            elif k == pg.K_h:
+                self.pending = "D" * self.rig.n_links
             elif k == pg.K_p:
                 self.paused = not self.paused
-            elif pg.K_1 <= k <= pg.K_4:
+            elif pg.K_1 <= k <= pg.K_4 and k - pg.K_1 < self.rig.n_links:
                 sign = -1.0 if ev.mod & pg.KMOD_SHIFT else 1.0
                 self.sim.push(k - pg.K_1, sign * PUSH_FORCE, PUSH_DURATION)
         elif ev.type == pg.MOUSEBUTTONDOWN and ev.button == 1:

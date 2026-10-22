@@ -1,0 +1,62 @@
+[
+ {
+  "start": "DD",
+  "goal": "DU",
+  "duration": 2.0,
+  "file": "DD-DU.json"
+ },
+ {
+  "start": "DD",
+  "goal": "UD",
+  "duration": 2.0,
+  "file": "DD-UD.json"
+ },
+ {
+  "start": "DD",
+  "goal": "UU",
+  "duration": 2.5,
+  "file": "DD-UU.json"
+ },
+ {
+  "start": "DU",
+  "goal": "DD",
+  "duration": 2.0,
+  "file": "DU-DD.json"
+ },
+ {
+  "start": "DU",
+  "goal": "UU",
+  "duration": 2.0,
+  "file": "DU-UU.json"
+ },
+ {
+  "start": "UD",
+  "goal": "DD",
+  "duration": 2.0,
+  "file": "UD-DD.json"
+ },
+ {
+  "start": "UD",
+  "goal": "UU",
+  "duration": 2.0,
+  "file": "UD-UU.json"
+ },
+ {
+  "start": "UU",
+  "goal": "DD",
+  "duration": 2.5,
+  "file": "UU-DD.json"
+ },
+ {
+  "start": "UU",
+  "goal": "DU",
+  "duration": 2.0,
+  "file": "UU-DU.json"
+ },
+ {
+  "start": "UU",
+  "goal": "UD",
+  "duration": 2.0,
+  "file": "UU-UD.json"
+ }
+]

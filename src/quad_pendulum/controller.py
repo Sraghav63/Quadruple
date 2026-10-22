@@ -317,6 +317,22 @@ class LQRController:
         self.z[3 : 3 + self.n] = y[1:]
         self._x_ref = x_ref
 
+    def seed(self, deviation: np.ndarray, in_flight: np.ndarray, x_ref: float = 0.0) -> None:
+        """Take over from another controller: `deviation` is the estimated
+        [x - x_ref, v, a, theta - theta_eq, omega]; `in_flight` the queued commands.
+        Other augmented states (integrals, servo error, torques) start at zero."""
+        ns = 3 + 2 * self.n
+        self.z = np.zeros(self.nz)
+        self.z[:ns] = deviation[:ns]
+        if self.delay:
+            self.z[self.nx : self.nx + self.delay] = in_flight
+        self._x_ref = x_ref
+
+    @property
+    def physical_estimate(self) -> np.ndarray:
+        """[x - x_ref, v, a, theta - theta_eq, omega] from the current estimate."""
+        return self.z[: 3 + 2 * self.n].copy()
+
     def step(self, meas: Measurement, x_ref: float = 0.0) -> float:
         """One control period: correct with the new reading, compute, predict."""
         # A reference change shifts the position coordinate of the estimate.

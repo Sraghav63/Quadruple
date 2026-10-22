@@ -1,0 +1,14 @@
+[
+ {
+  "start": "D",
+  "goal": "U",
+  "duration": 2.0,
+  "file": "D-U.json"
+ },
+ {
+  "start": "U",
+  "goal": "D",
+  "duration": 2.0,
+  "file": "U-D.json"
+ }
+]
