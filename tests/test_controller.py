@@ -7,9 +7,15 @@ import numpy as np
 import pytest
 from scipy.linalg import solve_discrete_are
 
-from quad_pendulum.controller import ControllerConfig, LQRController
+from quad_pendulum.controller import ControllerConfig, LQRController, default_config
 from quad_pendulum.linear import unstable_poles
-from quad_pendulum.params import Measurement, RigParams
+from quad_pendulum.params import (
+    Measurement,
+    RigParams,
+    absolute_to_relative,
+    all_configurations,
+    equilibrium_angles,
+)
 
 
 def test_default_rig_is_open_loop_unstable_with_four_modes():
@@ -214,3 +220,53 @@ int main(void) {
     np.testing.assert_allclose(
         np.fromstring(result.stdout, sep="\n"), commands, atol=0.01, rtol=1e-3
     )
+
+
+@pytest.mark.parametrize("cfg", all_configurations(4))
+def test_every_configuration_has_stable_lqr_and_observer(cfg):
+    ctl = LQRController(RigParams(), configuration=cfg)
+    assert ctl.configuration == cfg
+    np.testing.assert_allclose(ctl.theta_eq, equilibrium_angles(cfg, 4))
+    assert ctl.closed_loop_radius < 1.0
+    assert ctl.observer_radius < 1.0
+
+
+def test_default_config_depends_on_configuration():
+    assert default_config(None) == ControllerConfig()
+    assert default_config("UUUU") == ControllerConfig()
+    assert default_config("UUUD").joint_angle_tol == 0.005
+    assert default_config("uudd") == default_config("UUUD")
+
+
+@pytest.mark.parametrize("cfg", ["UUUU", "UUUD", "DDUU", "DUDU", "DDDD"])
+def test_measurement_at_equilibrium_gives_zero_command(cfg):
+    rig = RigParams()
+    ctl = LQRController(rig, configuration=cfg)
+    theta = ctl.theta_eq
+    meas = Measurement(0.0, 0.0, absolute_to_relative(theta))
+    ctl.reset(meas)
+    assert abs(ctl.step(meas)) < 1e-9
+    np.testing.assert_allclose(ctl.theta_estimate, theta, atol=1e-9)
+
+
+def test_encoder_wrap_by_two_pi_does_not_change_command():
+    rig = RigParams()
+    cfg = "UUUD"
+    plain = absolute_to_relative(equilibrium_angles(cfg, 4) + np.array([0.01, -0.02, 0.015, 0.005]))
+    wrapped = plain.copy()
+    wrapped[2] += 2 * np.pi
+    commands, estimates = [], []
+    for q in (plain, wrapped):
+        ctl = LQRController(rig, configuration=cfg)
+        ctl.reset(Measurement(0.0, 0.01, q))
+        commands.append(ctl.step(Measurement(0.001, 0.01, q)))
+        estimates.append(ctl.theta_estimate)
+    assert abs(commands[0]) > 1e-3
+    assert commands[1] == pytest.approx(commands[0], abs=1e-9)
+    np.testing.assert_allclose(estimates[1], estimates[0], atol=1e-9)
+
+
+def test_c_header_names_configuration_and_equilibrium():
+    header = LQRController(RigParams(), configuration="UUUD").to_c_header()
+    assert 'QP_CONFIGURATION "UUUD"' in header
+    assert "QP_THETA_EQ" in header

@@ -56,7 +56,7 @@
         <div class="plots panel">
           <figure class="plot">
             <figcaption>
-              <span class="label">link angles · deg:</span>
+              <span class="label">target error · deg:</span>
               <span class="legend" id="angles"></span>
             </figcaption>
             <canvas id="plot-angles"></canvas>
@@ -81,6 +81,11 @@
             <select id="preset"></select>
           </label>
           <p id="preset-desc" class="note"></p>
+          <div class="configuration">
+            <div class="row"><span>configuration</span><b id="h-configuration">UUUU</b></div>
+            <div id="configuration-links" class="configuration-links" role="group" aria-label="Link targets, bottom to top"></div>
+            <p class="note">Bottom to top · U = up, D = down. Changing a link resets the rig. Swing-up transitions are not implemented.</p>
+          </div>
         </section>
 
         <section class="panel">

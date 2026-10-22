@@ -31,6 +31,7 @@ const KNOBS: KnobSpec[] = [
 
 export interface PanelCallbacks {
   onPreset(id: string): void;
+  onConfiguration(configuration: string): void;
   onSpeed(v: number): void;
   onTapForce(n: number): void;
   onPush(link: number, dir: 1 | -1): void;
@@ -42,6 +43,7 @@ export class Panel {
   private desc = $("preset-desc");
   private knobsBox = $("knobs");
   private pushRow = $("push-row");
+  private configurationBox = $("configuration-links");
   private inputs = new Map<keyof RealityKnobs, { input: HTMLInputElement; out: HTMLElement; spec: KnobSpec }>();
   private sim: SimulationApi | null = null;
   private summaries: PresetSummary[] = [];
@@ -122,6 +124,7 @@ export class Panel {
   setSim(sim: SimulationApi): void {
     this.sim = sim;
     this.syncKnobs();
+    this.syncConfiguration();
     this.pushRow.replaceChildren();
     sim.rig.links.forEach((_, i) => {
       const row = el("div", "push");
@@ -140,6 +143,31 @@ export class Panel {
       r.addEventListener("click", () => this.cb.onPush(i, 1));
       row.append(l, name, r);
       this.pushRow.append(row);
+    });
+  }
+
+  syncConfiguration(): void {
+    if (!this.sim) return;
+    const sim = this.sim;
+    const focused = Array.from(this.configurationBox.children).findIndex(button => button === document.activeElement);
+    this.configurationBox.replaceChildren();
+    sim.rig.links.forEach((_, i) => {
+      const down = sim.configuration[i] === 'D';
+      const button = el('button', 'btn configuration-link', `${i + 1} ${down ? 'down' : 'up'}`);
+      const dot = el('i', 'dot');
+      dot.style.background = linkColor(i);
+      button.prepend(dot);
+      button.type = 'button';
+      button.setAttribute('aria-label', `Link ${i + 1}: ${down ? 'down' : 'up'}. Set ${down ? 'up' : 'down'}`);
+      button.setAttribute('aria-pressed', String(down));
+      button.title = 'Resets to the selected equilibrium. Swing-up transitions are not implemented.';
+      button.addEventListener('click', () => {
+        const cfg = sim.configuration.split('');
+        cfg[i] = down ? 'U' : 'D';
+        this.cb.onConfiguration(cfg.join(''));
+      });
+      this.configurationBox.append(button);
+      if (i === focused) button.focus();
     });
   }
 

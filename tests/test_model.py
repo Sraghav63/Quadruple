@@ -4,14 +4,18 @@ import mujoco
 import numpy as np
 import pytest
 
-from quad_pendulum.linear import angular_acceleration
+from quad_pendulum.linear import angular_acceleration, linearized, unstable_poles
 from quad_pendulum.model import make_rig_xml
 from quad_pendulum.params import (
     JointParams,
     LinkParams,
     RigParams,
     absolute_to_relative,
+    all_configurations,
+    equilibrium_angles,
+    parse_configuration,
     relative_to_absolute,
+    wrap_angle,
 )
 
 
@@ -100,3 +104,77 @@ def test_angular_acceleration_matches_independent_analytic_model(n, cart_accel, 
 def test_empty_chain_rejected():
     with pytest.raises(ValueError, match="at least one link"):
         make_rig_xml(replace(RigParams(), links=()))
+
+
+def test_unstable_pole_counts_for_key_configurations():
+    rig = RigParams()
+    assert len(unstable_poles(rig, "UUUU")) == 4
+    assert len(unstable_poles(rig, "DDDD")) == 0
+    assert len(unstable_poles(rig, "UUUD")) == 3
+    poles = unstable_poles(rig, "UUUD")
+    assert np.all(poles > 0)
+    assert np.all(np.diff(poles) <= 0), "poles should be sorted fastest first"
+
+
+@pytest.mark.parametrize("cfg", ["UUUD", "DDUU", "DUDU"])
+def test_linearized_matches_finite_difference_of_angular_acceleration(cfg):
+    rig = RigParams()
+    n = rig.n_links
+    theta_eq = equilibrium_angles(cfg, n)
+    zero = np.zeros(n)
+    eps = 1e-6
+    k_fd = np.zeros((n, n))
+    d_fd = np.zeros((n, n))
+    for i in range(n):
+        e = np.zeros(n)
+        e[i] = eps
+        k_fd[:, i] = (
+            angular_acceleration(rig, theta_eq + e, zero, 0.0)
+            - angular_acceleration(rig, theta_eq - e, zero, 0.0)
+        ) / (2 * eps)
+        d_fd[:, i] = (
+            angular_acceleration(rig, theta_eq, e, 0.0)
+            - angular_acceleration(rig, theta_eq, -e, 0.0)
+        ) / (2 * eps)
+    bv_fd = (
+        angular_acceleration(rig, theta_eq, zero, eps)
+        - angular_acceleration(rig, theta_eq, zero, -eps)
+    ) / (2 * eps)
+    k, d, bv = linearized(rig, cfg)
+    np.testing.assert_allclose(k, k_fd, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(d, d_fd, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(bv, bv_fd, rtol=1e-5, atol=1e-8)
+
+
+def test_parse_configuration_defaults_and_normalises():
+    assert parse_configuration(None, 4) == "UUUU"
+    assert parse_configuration("uudd", 4) == "UUDD"
+    assert parse_configuration(" UUUD ", 4) == "UUUD"
+
+
+@pytest.mark.parametrize("bad", ["", "UUU", "UUUDD", "UUXD", "UU D", "1111"])
+def test_parse_configuration_rejects_bad_strings(bad):
+    with pytest.raises(ValueError):
+        parse_configuration(bad, 4)
+
+
+def test_all_configurations_enumerates_every_combination():
+    configs = all_configurations(4)
+    assert len(configs) == 16
+    assert len(set(configs)) == 16
+    assert configs[0] == "UUUU"
+    assert all(len(c) == 4 and set(c) <= {"U", "D"} for c in configs)
+
+
+def test_equilibrium_angles_are_zero_for_up_and_pi_for_down():
+    np.testing.assert_allclose(equilibrium_angles("UUUD", 4), [0, 0, 0, np.pi])
+    np.testing.assert_allclose(equilibrium_angles("DUDU", 4), [np.pi, 0, np.pi, 0])
+    np.testing.assert_allclose(equilibrium_angles(None, 3), [0, 0, 0])
+
+
+def test_wrap_angle_maps_into_half_open_interval():
+    assert wrap_angle(0.1 + 2 * np.pi) == pytest.approx(0.1)
+    assert wrap_angle(-0.1 - 4 * np.pi) == pytest.approx(-0.1)
+    assert wrap_angle(3 * np.pi / 2) == pytest.approx(-np.pi / 2)
+    wrapped = wrap_angle(np.linspace(-20, 20, 1001))
+    assert np.all(wrapped >= -np.pi) and np.all(wrapped < np.pi)

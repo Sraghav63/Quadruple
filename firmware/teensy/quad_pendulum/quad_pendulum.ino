@@ -8,6 +8,7 @@
 #include <string.h>
 #include "qp_gains.h"
 
+static_assert(sizeof(QP_THETA_EQ) / sizeof(QP_THETA_EQ[0]) == 4, "QP_THETA_EQ needs one entry per link");
 static_assert(QP_NY == 5, "This sketch reads four relative joint encoders");
 static_assert(QP_DT > 0.0f, "Invalid controller period");
 static_assert(QP_COMPUTE_DELAY_STEPS >= 0, "Invalid command delay");
@@ -69,6 +70,14 @@ float clampValue(float x, float lower, float upper) {
   return fminf(upper, fmaxf(lower, x));
 }
 
+// Wrap an angle to [-pi, pi).
+float wrapAngle(float a) {
+  const float twoPi = 6.283185307179586f;
+  a = fmodf(a + 3.141592653589793f, twoPi);
+  if (a < 0.0f) a += twoPi;
+  return a - 3.141592653589793f;
+}
+
 bool evenParity(uint16_t word) {
   word ^= word >> 8;
   word ^= word >> 4;
@@ -111,20 +120,21 @@ void stopController(Fault reason) {
   sendDriveVelocity(0.0f, false);
 }
 
-void resetObserver(float x, const float theta[4], float reference) {
+// `dev` holds link angles as deviations from the target equilibrium (QP_THETA_EQ).
+void resetObserver(float x, const float dev[4], float reference) {
   memset(z, 0, sizeof(z));
   z[0] = x - reference;
-  for (unsigned i = 0; i < 4; ++i) z[3 + i] = theta[i];
+  for (unsigned i = 0; i < 4; ++i) z[3 + i] = dev[i];
   memset(commandQueue, 0, sizeof(commandQueue));
   previousReference = reference;
   velocitySetpoint = 0.0f;
 }
 
-float controllerStep(float x, const float theta[4], float reference) {
+float controllerStep(float x, const float dev[4], float reference) {
   // Match LQRController.step, including shifting the reference coordinate.
   z[0] -= reference - previousReference;
   previousReference = reference;
-  float y[QP_NY] = {x - reference, theta[0], theta[1], theta[2], theta[3]};
+  float y[QP_NY] = {x - reference, dev[0], dev[1], dev[2], dev[3]};
   float innovation[QP_NY] = {};
   for (unsigned i = 0; i < QP_NY; ++i) {
     innovation[i] = y[i];
@@ -167,17 +177,20 @@ void controlTick() {
     requestCalibration = false;
     requestArm = false;
     stopController(OK);
-    calibrated = sensorOK;  // operator holds all links upright in the jig
+    calibrated = sensorOK;  // operator holds the links in the jig, in the QP_CONFIGURATION pose
     if (sensorOK) memcpy(zeroCounts, raw, sizeof(raw));
   }
-  float theta[4] = {}, sum = 0.0f;
+  // theta: absolute link angles (telemetry); dev: deviation from the target equilibrium.
+  float theta[4] = {}, dev[4] = {}, sum = 0.0f;
   bool nearUpright = true, withinLimits = true;
   for (unsigned i = 0; i < 4; ++i) {
     int count = (int(raw[i]) - int(zeroCounts[i]) + 8192 + 16384) % 16384 - 8192;
     sum += kEncoderSign[i] * count * kRadiansPerCount;
-    theta[i] = sum;  // absolute tilt = cumulative relative encoder angles
-    nearUpright = nearUpright && fabsf(sum) <= kArmAngle;
-    withinLimits = withinLimits && fabsf(sum) <= kTripAngle;
+    // The jig pose is the equilibrium, so the encoder zero sits at QP_THETA_EQ.
+    theta[i] = QP_THETA_EQ[i] + sum;  // absolute angle = equilibrium + cumulative relative angles
+    dev[i] = wrapAngle(sum);
+    nearUpright = nearUpright && fabsf(dev[i]) <= kArmAngle;
+    withinLimits = withinLimits && fabsf(dev[i]) <= kTripAngle;
   }
   float x = NAN;
   bool cartOK = readCartPositionMeters(x) && isfinite(x);
@@ -194,7 +207,7 @@ void controlTick() {
     if (armPending && !armed) {
       uprightTicks = nearUpright ? uprightTicks + 1 : 0;
       if (uprightTicks >= kHoldTicks) {
-        resetObserver(x, theta, reference);
+        resetObserver(x, dev, reference);
         armPending = false;
         armed = true;
         fault = OK;
@@ -203,7 +216,7 @@ void controlTick() {
   }
   float applied = 0.0f;
   if (armed) {
-    const float u = controllerStep(x, theta, reference);
+    const float u = controllerStep(x, dev, reference);
     if (!isfinite(u)) stopController(NUMERIC);
     else {
       // Same delay queue as Simulation, separate from the observer's in-flight states.

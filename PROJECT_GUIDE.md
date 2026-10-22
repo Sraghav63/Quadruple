@@ -41,7 +41,7 @@ changing the rig description changes everything consistently.
 | Module | Role |
 | --- | --- |
 | `params.py` | `RigParams`: `LinkParams` (length, rod mass, top mass), `JointParams` (Coulomb, viscous), `CartParams`, `DriveParams`, `SensorParams`, `TimingParams`; the `Measurement` type; angle conversions. |
-| `linear.py` | Analytic n-link dynamics (independent of MuJoCo), upright linearisation, open-loop unstable poles, and the continuous design model `state_space`. |
+| `linear.py` | Analytic n-link dynamics (independent of MuJoCo), linearisation about any up/down equilibrium, open-loop unstable poles, and the continuous design model `state_space`. |
 | `controller.py` | `ControllerConfig` and `LQRController`: discretisation, delay augmentation, LQR and Kalman gains, the per-period `step`, and `to_c_header` export. |
 | `model.py` | Generates the MuJoCo XML from `RigParams`. |
 | `plant.py` | `Plant`: ground-truth MuJoCo mechanics, velocity-mode servo, taps, sensor model. |
@@ -51,12 +51,40 @@ changing the rig description changes everything consistently.
 
 - Encoder joint angles `q_i` are relative: link `i` against link `i-1` (link 0
   is the cart). Zero is straight up; positive tilts toward +x.
+- A configuration is a string of `U`/`D`, one per link, bottom link first
+  (`UUUD`: top link down). `parse_configuration` validates it (None means all
+  up), `all_configurations(n)` lists the 2^n combinations, and
+  `equilibrium_angles` gives the target absolute angles (0 up, pi down).
+  `wrap_angle` wraps to [-pi, pi).
 - Absolute angles are cumulative sums, `theta_i = q_1 + ... + q_i`
   (`relative_to_absolute`, `absolute_to_relative`).
 - The controller output is a cart acceleration command in m/s^2.
 - The controller sees only a `Measurement`: quantised cart position and the
   relative encoder angles. It never sees velocities or ground truth;
   `Plant.state()` is for drawing and diagnostics only.
+
+### Configurations
+
+The controller, `Simulation` and the firmware export all take a
+`configuration`. The linear model is built about that equilibrium
+(`linear.linearized`, `state_space`, `unstable_poles` take it too), and the
+angle states are deviations from the target, `wrap_angle(theta - theta_eq)`.
+`LQRController.theta_eq` holds the target and `theta_estimate` still returns
+absolute angles. In `Simulation`, `reset(random_tilt_deg=...)` tilts about the
+equilibrium and a run counts as fallen when any link is more than 0.6 rad from
+its target, or at the rail end.
+
+- Tuning: `controller.default_config(configuration)`. All-up keeps the original
+  tuning; anything with a `D` uses `joint_angle_tol=0.005` (stiffer joints keep
+  the chain from folding at the hinges between up and down links),
+  `link_accel_noise=2.5` (faster angle estimate) and `angle_integral_tol=0.003`.
+  `DUUU` and `DDUU` remain the least robust, at about 75-90% in the Monte Carlo
+  against 100% for the other 14.
+- `DDDD` has no unstable poles: it is open-loop stable, so the controller adds
+  damping and cart positioning only.
+- Switching configuration needs a reset. Swing-up and transitions between
+  equilibria are not implemented; the start must be released near the target
+  pose.
 
 ### Plant
 
@@ -71,8 +99,8 @@ to `accel_limit`) is integrated into a velocity setpoint (clamped to
 `velocity_limit`); a PI velocity loop with bandwidth `velocity_bandwidth` turns
 the velocity error into belt force (clamped to `force_limit`), with conditional
 anti-windup. `Plant.push` applies a horizontal force at the moving top of a link
-for a given duration. A run counts as fallen if any absolute angle exceeds 0.6
-rad or the cart touches the end of the rail.
+for a given duration. A run counts as fallen if any link deviates more than 0.6
+rad from its target angle or the cart touches the end of the rail.
 
 ### Sensor model
 
@@ -87,14 +115,14 @@ controller on the measurement and `x_ref`, push the command into a queue of
 `compute_delay_steps` entries, apply the oldest command to the plant for one
 period. This models sample, compute and bus latency as whole periods. The
 simulation can take a separate `controller_rig` (what the controller believes)
-from `rig` (the truth) to test model mismatch. `reset` starts upright or at
-given tilts and tells the controller the true starting pose, like a rig released
+from `rig` (the truth) to test model mismatch. `reset` starts at the target
+equilibrium (optionally tilted about it) or at given angles and tells the controller the true starting pose, like a rig released
 from a jig after one sensor read. `set_reference` clamps the target to 80% of the
 rail half-length.
 
 ## How the controller is designed
 
-1. **Linear model.** `linear.state_space` linearises the chain about upright
+1. **Linear model.** `linear.state_space` linearises the chain about the target equilibrium (upright by default)
    with cart acceleration as the input: state `[x, v, a, theta_1..n, omega_1..n]`.
    `a` is the actual cart acceleration and is a first-order lag (`model_lag`)
    behind the command, representing the velocity-loop dynamics.
@@ -150,8 +178,9 @@ joint flex, motor thermal limits, and discrete-time effects inside the servo.
   trade-off is made.
 - **Taps.** A quadruple pendulum tolerates only light taps: about 0.1 N for 20 ms
   on the top link with a 30 m/s^2 cart.
-- **Starting.** The controller only works near upright. Start by releasing the
-  chain from a jig essentially perfectly upright. Swing-up is not implemented.
+- **Starting.** The controller only works near its target equilibrium. Start by
+  releasing the chain from a jig essentially perfectly at that pose (upright for
+  `UUUU`). Swing-up is not implemented.
 - **Robustness.** `check_robustness.py` draws random +/-2% lengths, +/-10%
   masses, friction x0.5-2, drive bandwidth +/-40%, occasional extra delay,
   random light taps and a reference step. Survival is about 95% or better.
@@ -163,19 +192,24 @@ joint flex, motor thermal limits, and discrete-time effects inside the servo.
 ```bash
 python scripts/run_realtime.py                 # interactive viewer
 python scripts/run_realtime.py --headless 10   # no window, prints a summary
+python scripts/run_realtime.py --config UUUD   # top link hanging down
 python scripts/check_robustness.py --trials 100 --workers 4
 python scripts/check_robustness.py --nominal   # only taps, no mismatch
+python scripts/check_robustness.py --all-configs --trials 20 --workers 8
 python scripts/design_sweep.py --quick
 python scripts/show3d.py                       # browser 3D viewer
-python scripts/export_firmware.py
+python scripts/export_firmware.py --config UUUU
 ```
 
 - `run_realtime.py`: pygame viewer. Controls are in `README.md`. Options:
-  `--speed`, `--seed`, `--tilt-deg`, `--no-controller`, `--headless SECONDS`.
-  Shows the rig, state, estimated tilts and rolling plots.
+  `--speed`, `--seed`, `--tilt-deg`, `--config`, `--no-controller`,
+  `--headless SECONDS`. C / Shift+C cycles through the 16 configurations
+  (rebuilds the sim and resets). Shows the rig, the configuration, link angle
+  errors from the target and rolling plots; down links hang below the rail.
 - `check_robustness.py`: seeded trials with random mismatch. `--trials`,
   `--seconds`, `--workers`, `--seed`, `--min-success` (exit threshold),
-  `--nominal`, `--push-scale`, and per-effect multipliers `--length-scale`,
+  `--nominal`, `--push-scale`, `--config CFG` (default all up), `--all-configs`
+  (runs every configuration and prints a survival table), and per-effect multipliers `--length-scale`,
   `--mass-scale`, `--cart-mass-scale`, `--friction-scale`, `--viscous-scale`,
   `--bandwidth-scale`, `--delay-scale` that widen or narrow each uncertainty
   (for delay, the extra-step probability divided by 0.2).
@@ -184,9 +218,10 @@ python scripts/export_firmware.py
   the open-loop unstable poles. `--quick`, `--workers`, `--seeds`, `--seconds`.
 - `show3d.py`: runs a scripted headless simulation (reference moves and taps),
   writes `viewer3d/trajectory.json` and serves `viewer3d/` on localhost
-  (`--seconds`, `--seed`, `--port`, `--no-open`, `--export-only`).
+  (`--seconds`, `--seed`, `--config`, `--port`, `--no-open`, `--export-only`).
 - `export_firmware.py`: writes the controller gains, parameters and limits for
-  the Teensy sketch (`--output`). See `firmware/README.md`.
+  the Teensy sketch (`--output`, `--config`; the header gets `QP_CONFIGURATION`
+  and `QP_THETA_EQ`). See `firmware/README.md`.
 
 ## Adapting it to your real build
 
@@ -209,7 +244,7 @@ The intended workflow:
    detailed procedure.
 6. Update `params.py` with the measurements and rerun the checks.
 7. Run `export_firmware.py` and follow the bring-up steps in
-   `firmware/README.md` (upright jig, calibration, conservative limits, E-stop).
+   `firmware/README.md` (jig in the target configuration, calibration, conservative limits, E-stop).
    The Teensy sketch is a skeleton: the drive and cart-position stubs fail
    closed and must be implemented.
 
@@ -225,7 +260,7 @@ cost is 1 / deviation^2. Smaller tolerance = heavier penalty.
 - `cart_position_tol`: how far the cart may sit from the reference. Smaller pulls
   the cart back to the target harder, at the cost of the angle loops.
 - `cart_velocity_tol`: penalty on cart speed; damps rail travel.
-- `angle_tol`: penalty on each link's absolute tilt.
+- `angle_tol`: penalty on each link's tilt from its target equilibrium.
 - `rate_tol`: penalty on each link's angular rate; more damping.
 - `accel_tol`: penalty on the command. Larger tolerance = cheaper command = more
   aggressive and noisier output. Smaller = quieter actuator, weaker wander
@@ -270,6 +305,8 @@ The Teensy firmware is not built or run by any Python test.
 
 - Joint friction identification and compensation, since stiction is the dominant
   failure mode.
+- Swing-up and transitions between configurations (needed to move from one
+  equilibrium to another without resetting).
 - Swing-up via trajectory optimisation plus time-varying LQR, to remove the
   need for a jig.
 - Optional RL layered on top of the model-based controller (for example residual

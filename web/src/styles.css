@@ -223,6 +223,11 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .push button:hover { color: var(--fg); background: rgba(255, 255, 255, 0.08); }
 
+.configuration { margin-top: 16px; }
+.configuration-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.configuration-link { height: 36px; justify-content: flex-start; font-variant-numeric: tabular-nums; }
+.configuration-link[aria-pressed="true"] { background: var(--blue-tint); border-color: var(--blue); }
+
 .tip {
   position: relative; appearance: none; border: 0; padding: 0; flex: none; cursor: help;
   width: 15px; height: 15px; border-radius: 50%; background: var(--btn); color: var(--sub);

@@ -1,4 +1,4 @@
-import { LQRController } from './controller';
+import { LQRController, wrapAngle } from './controller';
 import { Plant, SeededRandom } from './plant';
 import type { Preset, RealityKnobs, SimStatus, SimulationApi } from './types';
 
@@ -19,7 +19,7 @@ class Simulation implements SimulationApi {
   readonly knobs: RealityKnobs;
   private controllerOn = true;
   private readonly plant: Plant;
-  private readonly controller: LQRController;
+  private controller: LQRController;
   private readonly rng: SeededRandom;
   private readonly pending: Float64Array;
   private delay: number;
@@ -31,6 +31,16 @@ class Simulation implements SimulationApi {
   private readonly snapshot: SimStatus;
   private readonly points: Array<[number, number]>;
   private readonly initialTheta: Float64Array;
+
+  get configuration(): string { return this.controller.matrices.configuration; }
+
+  setConfiguration(configuration: string): void {
+    const cfg = configuration.trim().toUpperCase();
+    if (!/^[UD]+$/.test(cfg) || cfg.length !== this.rig.links.length ||
+        !Object.hasOwn(this.preset.configurations, cfg)) throw new RangeError('Invalid configuration');
+    this.controller = new LQRController(this.preset.configurations[cfg].controller);
+    this.reset();
+  }
 
   get controllerEnabled(): boolean { return this.controllerOn; }
   set controllerEnabled(enabled: boolean) {
@@ -60,6 +70,7 @@ class Simulation implements SimulationApi {
     this.initialTheta = new Float64Array(this.rig.links.length);
     this.points = Array.from({ length: this.rig.links.length + 1 }, () => [0, 0]);
     this.snapshot = {
+      configuration: this.configuration, thetaDeviation: new Float64Array(this.rig.links.length),
       t: 0, x: 0, v: 0, a: 0, theta: new Float64Array(this.rig.links.length),
       omega: new Float64Array(this.rig.links.length), thetaEstimate: new Float64Array(this.rig.links.length),
       xRef: 0, command: 0, force: 0, driveEnabled: true, vSetpoint: 0,
@@ -71,7 +82,9 @@ class Simulation implements SimulationApi {
   reset(opts?: { randomTiltDeg?: number; theta?: number[] }): void {
     const tilt = opts?.randomTiltDeg ?? 0;
     if (!Number.isFinite(tilt) || tilt < 0) throw new RangeError('Invalid random tilt');
-    for (let i = 0; i < this.initialTheta.length; i++) this.initialTheta[i] = (2 * this.rng.uniform() - 1) * tilt * Math.PI / 180;
+    for (let i = 0; i < this.initialTheta.length; i++) {
+      this.initialTheta[i] = this.controller.matrices.thetaEq[i] + (2 * this.rng.uniform() - 1) * tilt * Math.PI / 180;
+    }
     this.plant.reset(opts?.theta ?? this.initialTheta);
     // Keep the requested reference across resets, initializing in that frame.
     this.controller.reset(this.plant.measure(), this.xRef);
@@ -126,7 +139,9 @@ class Simulation implements SimulationApi {
     this.command = armed ? applied : 0;
     this.plant.step(this.command);
     let fallen = this.plant.hitRailEnd;
-    for (let i = 0; i < this.plant.n; i++) if (Math.abs(this.plant.theta[i]) > 0.6) fallen = true;
+    for (let i = 0; i < this.plant.n; i++) {
+      if (Math.abs(wrapAngle(this.plant.theta[i] - this.controller.matrices.thetaEq[i])) > 0.6) fallen = true;
+    }
     if (fallen && !this.fallen) {
       this.fallen = true;
       this.disableDrive();
@@ -147,7 +162,12 @@ class Simulation implements SimulationApi {
     const s = this.snapshot, p = this.plant;
     s.t = p.t; s.x = p.q[0]; s.v = p.velocity[0]; s.a = p.a;
     s.theta.set(p.theta); s.omega.set(p.omega);
-    for (let i = 0; i < p.n; i++) s.thetaEstimate[i] = this.controller.z[this.preset.controller.thetaIndex + i];
+    const m = this.controller.matrices;
+    s.configuration = this.configuration;
+    for (let i = 0; i < p.n; i++) {
+      s.thetaEstimate[i] = this.controller.z[m.thetaIndex + i] + m.thetaEq[i];
+      s.thetaDeviation[i] = wrapAngle(p.theta[i] - m.thetaEq[i]);
+    }
     s.xRef = this.xRef; s.command = this.command; s.force = p.force;
     s.driveEnabled = p.driveEnabled; s.vSetpoint = p.vSetpoint;
     s.fallen = this.fallen; s.hitRailEnd = p.hitRailEnd; s.controllerEnabled = this.controllerEnabled;

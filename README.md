@@ -37,11 +37,39 @@ python scripts/run_realtime.py
 | 1-4 | tap link 1-4 to the right (0.1 N for 20 ms); Shift reverses |
 | Space | controller on / off |
 | R | reset |
+| C / Shift+C | next / previous configuration (resets the run) |
 | P | pause |
 | Esc | quit |
 
 Options: `--speed` (0.1-2), `--seed`, `--tilt-deg` (initial random tilt),
-`--no-controller`, `--headless SECONDS` (no window, prints a summary).
+`--config UUUD` (which links balance up or down, see below), `--no-controller`, `--headless SECONDS` (no window, prints a summary).
+
+## Configurations
+
+Any combination of links up or down can be balanced, not only all up. A
+configuration is a string of `U` and `D`, one per link, **bottom link first**:
+`UUUU` is the classic quadruple pendulum, `UUUD` has the top link hanging
+down, `DDUU` has the two lower links down and the two upper links up. There
+are 16 combinations (`quad_pendulum.params.all_configurations`). Each is an
+equilibrium with its own linearisation and its own gains; link angles are
+controlled as deviations from the target (0 for up, pi for down).
+
+- `UUUU` keeps the original tuning. Any configuration with a `D` uses a
+  stronger joint-bend penalty, a faster angle estimate and a weaker
+  low-frequency attitude cost (see `controller.default_config`).
+- `DDDD` is open-loop stable (every link hangs down); the controller then only
+  damps it and holds the cart at the target.
+- The sim starts in the chosen configuration, tilted slightly about it.
+  Moving from one equilibrium to another needs swing-up or a transition
+  trajectory, which is not implemented. Switching configuration therefore
+  resets the run.
+- Every configuration of the default rig survives a 20 cm reference step and
+  0.08 N taps in MuJoCo without mismatch. Under the full Monte Carlo
+  (`scripts/check_robustness.py --all-configs --trials 40`) 14 of 16 reach
+  100%. `DUUU` (78%) and `DDUU` (75%) are the weak ones: three or two inverted
+  links stacked on hanging ones, which the cart can only reach through the
+  swinging links. Tuning sweeps plateaued at about 75-90% for both (it varies
+  with the seeds); the upright tuning gave about 55% for `DDUU`.
 
 ## Website
 
@@ -55,14 +83,15 @@ Pages are in the web README.
 
 - `scripts/run_realtime.py`: interactive real-time viewer (above).
 - `scripts/show3d.py`: simulate a scripted run and serve a browser 3D viewer
-  from `viewer3d/` (`--seconds`, `--seed`, `--port`, `--no-open`, `--export-only`).
+  from `viewer3d/` (`--seconds`, `--seed`, `--config`, `--port`, `--no-open`, `--export-only`).
 - `scripts/check_robustness.py`: seeded Monte Carlo of model mismatch, drive
   variation, delay and taps; reports the survival rate (`--trials`, `--workers`,
-  `--min-success`, `--nominal`, per-effect `--*-scale` multipliers).
+  `--min-success`, `--nominal`, `--config CFG`, `--all-configs` (survival table
+  per configuration), per-effect `--*-scale` multipliers).
 - `scripts/design_sweep.py`: screens link length, material and joint friction
   with the same disturbed trials (`--quick` for a fast pass).
 - `scripts/export_firmware.py`: writes the gains and limits for the Teensy
-  sketch (`--output`).
+  sketch (`--output`, `--config`).
 
 ## Findings so far
 
@@ -84,7 +113,7 @@ Pages are in the web README.
   noise into actuator chatter; low gains let stiction wander grow.
 - **Only light taps are survivable.** About 0.1 N for 20 ms on the top link,
   with a 30 m/s^2 cart. Starting requires releasing the chain nearly perfectly
-  upright (a jig); swing-up is future work.
+  at the target equilibrium (a jig); swing-up is future work.
 - **Robustness check.** With random +/-2% lengths, +/-10% masses, friction x0.5-2,
   drive bandwidth +/-40%, occasional extra delay, random light taps and a
   reference step, survival is about 95% or better.

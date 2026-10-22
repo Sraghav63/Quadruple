@@ -14,7 +14,12 @@ for _name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
 
 import numpy as np
 
-from quad_pendulum.params import RigParams
+from quad_pendulum.params import (
+    RigParams,
+    all_configurations,
+    parse_configuration,
+    wrap_angle,
+)
 from quad_pendulum.sim import Simulation
 
 # Random taps: a quadruple pendulum on a 30 m/s^2 cart only survives light ones.
@@ -36,6 +41,7 @@ class Perturbations:
 class Trial:
     seed: int
     seconds: float = 8.0
+    configuration: str | None = None
     nominal: RigParams = field(default_factory=RigParams)
     perturbations: Perturbations | None = field(default_factory=Perturbations)
     push_scale: float = 1.0
@@ -97,7 +103,13 @@ def run_trial(trial: Trial) -> Result:
         if trial.perturbations is None
         else perturb_rig(trial.nominal, np.random.default_rng(parameter_seed), trial.perturbations)
     )
-    sim = Simulation(rig=true_rig, controller_rig=trial.nominal, seed=trial.seed)
+    # True plant and nominal controller share the target equilibrium; reset tilts about it.
+    sim = Simulation(
+        rig=true_rig,
+        controller_rig=trial.nominal,
+        seed=trial.seed,
+        configuration=trial.configuration,
+    )
     sim.reset(random_tilt_deg=0.05)
     next_push = rng.exponential(2.0)
     max_x = max_accel = max_force = 0.0
@@ -121,7 +133,7 @@ def run_trial(trial: Trial) -> Result:
         max_x = max(max_x, abs(state["x"]))
         max_accel = max(max_accel, abs(state["a"]))
         max_force = max(max_force, abs(state["force"]))
-        angle_squares += np.asarray(state["theta"]) ** 2
+        angle_squares += wrap_angle(np.asarray(state["theta"]) - sim.theta_eq) ** 2
         count += 1
         if sim.fallen:
             break
@@ -162,6 +174,15 @@ def main() -> int:
         "--nominal", action="store_true", help="no parameter mismatch; pushes remain"
     )
     parser.add_argument("--push-scale", type=float, default=1.0)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--config", metavar="CFG", help="up/down configuration, bottom link first (default all U)"
+    )
+    group.add_argument(
+        "--all-configs",
+        action="store_true",
+        help="run every U/D configuration and print a per-configuration survival table",
+    )
     for name in Perturbations.__dataclass_fields__:
         parser.add_argument(
             f"--{name.replace('_', '-')}-scale",
@@ -194,19 +215,46 @@ def main() -> int:
         parser.error("push-scale must be finite and nonnegative")
     if args.seconds < RigParams().control_dt:
         parser.error("seconds must include at least one control tick")
-    results = run_trials(
-        [
+    n_links = RigParams().n_links
+    try:
+        configuration = parse_configuration(args.config, n_links)
+    except ValueError as exc:
+        parser.error(str(exc))
+    configurations = all_configurations(n_links) if args.all_configs else [configuration]
+
+    def make_trials(cfg: str) -> list[Trial]:
+        return [
             Trial(
                 args.seed + i,
                 args.seconds,
+                cfg,
                 perturbations=None if args.nominal else p,
                 push_scale=args.push_scale,
             )
             for i in range(args.trials)
-        ],
-        args.workers,
-    )
-    print(" seed  result  fall(s)  max|x|(m)  max|a|(m/s²)  max|F|(N)  RMS angles 1..4 (deg)")
+        ]
+
+    if args.all_configs:
+        everything = run_trials([t for cfg in configurations for t in make_trials(cfg)], args.workers)
+        print("config  survived  rate    median fall(s)  p95 rail use  p95 |F|(N)  max RMS angle(deg)")
+        worst = 1.0
+        for k, cfg in enumerate(configurations):
+            rs = everything[k * args.trials : (k + 1) * args.trials]
+            rate = float(np.mean([r.survived for r in rs]))
+            worst = min(worst, rate)
+            falls = [r.fall_time for r in rs if r.fall_time is not None]
+            median_fall = f"{np.median(falls):.2f}" if falls else "-"
+            print(
+                f"{cfg:6s}  {sum(r.survived for r in rs):3d}/{len(rs):<3d}  {rate:6.1%}"
+                f"  {median_fall:>14s}  {np.percentile([r.rail_fraction for r in rs], 95):11.1%}"
+                f"  {np.percentile([r.max_force for r in rs], 95):10.2f}"
+                f"  {max(max(r.rms_angles_deg) for r in rs):18.3f}"
+            )
+        print(f"\nWorst configuration survival {worst:.1%}; required {args.min_success:.1%}")
+        return int(worst < args.min_success)
+    print(f"Configuration {configuration} (bottom link first, U up / D down)")
+    results = run_trials(make_trials(configuration), args.workers)
+    print(" seed  result  fall(s)  max|x|(m)  max|a|(m/s²)  max|F|(N)  RMS angle error 1..4 (deg)")
     for r in results:
         fall = "-" if r.fall_time is None else f"{r.fall_time:.3f}"
         rms = " ".join(f"{angle:.3f}" for angle in r.rms_angles_deg)

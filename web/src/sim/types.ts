@@ -32,11 +32,13 @@ export interface RigParams {
 
 /** Fixed-matrix runtime, identical to firmware/teensy and LQRController.step. */
 export interface ControllerMatrices {
+  configuration: string; // U/D per link, bottom first
+  thetaEq: number[]; // absolute target angles, rad
   nz: number;
   ny: number; // 1 + nLinks
   dt: number;
   accelLimit: number;
-  thetaIndex: number; // z[thetaIndex .. thetaIndex+n-1] are the absolute angle estimates
+  thetaIndex: number; // z[thetaIndex .. thetaIndex+n-1] are deviations from thetaEq
   stateLayout: string;
   K: number[]; // (nz)
   L: number[][]; // (nz x ny)
@@ -54,6 +56,7 @@ export interface Preset {
   unstablePoles: number[]; // rad/s, fastest first
   rig: RigParams;
   controller: ControllerMatrices;
+  configurations: Record<string, { controller: ControllerMatrices; unstablePoles: number[] }>;
 }
 
 export interface PresetSummary {
@@ -86,11 +89,13 @@ export interface RealityKnobs {
 }
 
 export interface SimStatus {
+  configuration: string;
   t: number; // s
   x: number; // cart position, m
   v: number; // m/s
   a: number; // actual cart acceleration, m/s^2
   theta: Float64Array; // absolute link angles, rad
+  thetaDeviation: Float64Array; // wrapped angle errors from the target, rad
   omega: Float64Array; // rad/s
   thetaEstimate: Float64Array; // controller's estimate, rad
   xRef: number;
@@ -111,6 +116,8 @@ export interface SimulationApi {
   readonly preset: Preset;
   readonly rig: RigParams; // nominal (preset) rig
   readonly knobs: RealityKnobs;
+  readonly configuration: string;
+  setConfiguration(configuration: string): void; // resets near the selected equilibrium
   controllerEnabled: boolean;
   reset(opts?: { randomTiltDeg?: number; theta?: number[] }): void;
   setReference(x: number): void; // clipped to +-0.8 rail

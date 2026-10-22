@@ -11,6 +11,7 @@ from quad_pendulum.params import (
     RigParams,
     absolute_to_relative,
     relative_to_absolute,
+    wrap_angle,
 )
 
 
@@ -135,13 +136,15 @@ class Plant:
             "v_setpoint": self._v_sp,
         }
 
-    def fallen(self, limit_rad: float = 0.6) -> bool:
+    def fallen(self, limit_rad: float = 0.6, theta_eq: np.ndarray | None = None) -> bool:
+        """Rail end hit, or any link more than `limit_rad` from its target angle
+        (`theta_eq`, absolute; default upright)."""
         if abs(self.data.qpos[0]) > self.rig.cart.rail_half_length:
             self.hit_rail_end = True
-        return bool(
-            self.hit_rail_end
-            or np.any(np.abs(relative_to_absolute(self.data.qpos[1:])) > limit_rad)
-        )
+        theta = relative_to_absolute(self.data.qpos[1:])
+        if theta_eq is not None:
+            theta = wrap_angle(theta - theta_eq)
+        return bool(self.hit_rail_end or np.any(np.abs(theta) > limit_rad))
 
     def link_points(self) -> np.ndarray:
         """World (x, z) of every lower hinge followed by the chain tip."""

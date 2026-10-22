@@ -3,8 +3,14 @@
 Generate gains from the repository root:
 
 ```sh
-.venv/bin/python scripts/export_firmware.py
+.venv/bin/python scripts/export_firmware.py                 # all links up
+.venv/bin/python scripts/export_firmware.py --config UUUD   # top link down
 ```
+
+The configuration is a string of `U`/`D`, one per link, bottom link first. It
+is baked into `qp_gains.h` as `QP_CONFIGURATION` and `QP_THETA_EQ[]` (0 for up,
+pi for down); the sketch controls `wrap(theta_i - QP_THETA_EQ[i])`. One build
+balances one configuration. The shipped header is all up.
 
 Open `teensy/quad_pendulum/quad_pendulum.ino` in Teensyduino, select Teensy 4.1,
 and build with its standard Arduino, SPI and IntervalTimer libraries. No moteus
@@ -81,26 +87,30 @@ add another transport delay. Verify float32 behavior against Python before relea
 
 ## Calibration and bring-up
 
-1. Start with drive power disabled and links secured in an upright jig. Home and
+1. Start with drive power disabled and links secured in a jig that holds the
+   chain in the exported configuration (`QP_CONFIGURATION`, e.g. links 1-3 up
+   and link 4 down for `UUUD`). Home and
    centre the cart encoder. Verify all relative encoder signs and scale manually.
 2. Press the calibration button or send `c` followed by newline to save all four
-   current encoder offsets. Calibration disarms. Confirm zero absolute angles and
-   centred cart telemetry. The sketch cannot detect an incorrectly positioned jig.
-3. Send `a` + newline to request arming. All four **absolute** angles must remain
-   within +/-3 degrees for 0.5 s; valid encoder/cart feedback and calibration are
+   current encoder offsets. Calibration disarms. The jig pose is taken as the
+   equilibrium, so telemetry then reads `QP_THETA_EQ` (0 or pi per link). Confirm
+   that and centred cart telemetry. The sketch cannot detect an incorrectly positioned jig.
+3. Send `a` + newline to request arming. All four angle **deviations from the
+   equilibrium** must remain within +/-3 degrees for 0.5 s; valid encoder/cart feedback and calibration are
    mandatory. The estimator and velocity setpoint reset at arming.
 4. Test stop/disable (`d`), sensor faults, rail switches and the independent E-stop
    with the links restrained and conservative drive limits. The software disarms
-   for any absolute angle beyond 25 degrees, cart travel beyond the exported
+   for any deviation from the equilibrium beyond 25 degrees, cart travel beyond the exported
    half-rail limit, invalid feedback, drive enqueue failure or timer overrun.
    Faults require another explicit `a` request; they do not auto-rearm.
 5. Release from the jig only after signs, timing and stops are verified. Begin
-   near upright. Send `r 0.2` + newline for a 0.2 m reference; requests clamp to
+   near the target equilibrium. The sketch cannot swing up or move between
+   configurations. Send `r 0.2` + newline for a 0.2 m reference; requests clamp to
    80% of the rail half-length. Re-measure delay and velocity response on hardware.
 
 CSV telemetry is sampled at 100 Hz and printed outside the ISR; samples may be
 dropped if USB cannot keep up. Fields are tick, cart position/reference (m), four
-absolute angles (rad), applied acceleration command (m/s²), integrated velocity
+absolute angles (rad, equilibrium plus deviation, so 0 or pi at rest), applied acceleration command (m/s²), integrated velocity
 setpoint (m/s), ISR duration (microseconds), armed/calibrated flags and fault code.
 Fault codes: 0 OK, 1 encoder, 2 cart feedback, 3 angle/rail, 4 drive transport,
 5 ISR overrun, 6 nonfinite controller state. There is no acceleration or force

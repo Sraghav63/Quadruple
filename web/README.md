@@ -41,6 +41,27 @@ This also refreshes `web/test/golden/*`. Rerun it after changing
 `src/quad_pendulum/params.py` or the controller, then run `npm test` and
 `npm run build` again.
 
+Each preset exports `configurations: { UUUU: { controller, unstablePoles }, ... }`
+for all `2^n` up/down combinations. Every controller includes `configuration`
+and `thetaEq` (absolute target angles in radians). The top-level `controller`
+and `unstablePoles` remain the all-up default. Letters run **bottom link first**:
+`UUUD` has its top link hanging down; `DDUU` has its bottom two down.
+
+Use the coloured link buttons in the side panel to choose each target. Changing
+configuration resets the plant to that equilibrium and re-arms the controller;
+swing-up transitions are not implemented. Share a preset and configuration with
+`#quad/UUUD`; older `#quad` links still start all-up. Angle telemetry and plots
+show wrapped deviations from the selected targets, while the ghost chain uses
+absolute estimated angles. All-down has zero unstable modes and is naturally
+stable; the controller damps its motion.
+
+Parity tests cover all-up and mixed controller traces (including encoder wrap),
+upright and mixed MuJoCo plant traces, and six-second closed-loop runs with a
+20 cm reference step and a 0.08 N tap from equilibrium for every exported
+configuration. These are nominal checks, not robustness guarantees: an extra
+0.05-degree random starting tilt caused `quad-short/DDUU` to fall in the
+combined step/tap scenario, and a similar failure reproduced in Python/MuJoCo.
+
 ## Deploying
 
 The only artifact to deploy is `web/dist/`, produced by `npm run build`.

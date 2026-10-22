@@ -16,6 +16,7 @@ export class Hud {
   private status = $("status");
   private perf = $("perf");
   private angleBox = $("angles");
+  private configuration = $("h-configuration");
   private angleEls: HTMLElement[] = [];
   private sim: SimulationApi;
 
@@ -32,7 +33,7 @@ export class Hud {
       const row = el("span", "key");
       const dot = el("i", "dot");
       dot.style.background = linkColor(i);
-      row.title = `Link ${i + 1}`;
+      row.title = `Link ${i + 1}: deviation from target`;
       const v = el("span", "v", "0.0°");
       row.append(dot, v);
       this.angleBox.append(row);
@@ -44,6 +45,7 @@ export class Hud {
     const drive = this.sim.rig.drive;
     const accLim = this.sim.knobs.accelLimit;
     setText(this.t, `${st.t.toFixed(2)} s`);
+    setText(this.configuration, st.configuration);
     setText(this.x, `${st.x.toFixed(3)} m`);
     setText(this.v, `${st.v.toFixed(2)} m/s`);
     setText(this.a, `${st.a.toFixed(1)} m/s²`);
@@ -52,7 +54,7 @@ export class Hud {
     setBar(this.barF, st.force / drive.forceLimit);
     setBar(this.barC, st.command / accLim);
     for (let i = 0; i < this.angleEls.length; i++) {
-      setText(this.angleEls[i]!, `${wrapDeg((st.theta[i] ?? 0) * RAD2DEG).toFixed(1)}°`);
+      setText(this.angleEls[i]!, `${((st.thetaDeviation[i] ?? 0) * RAD2DEG).toFixed(1)}°`);
     }
     let text = "balancing", cls = "pill ok";
     if (st.fallen) { text = "fallen"; cls = "pill bad"; }
@@ -71,10 +73,4 @@ function setBar(bar: HTMLElement, frac: number): void {
   i.style.transform = f < 0 ? "translateX(-100%)" : "none";
   const cls = Math.abs(f) >= 0.98 ? "bar max" : Math.abs(f) > 0.8 ? "bar hot" : "bar";
   if (bar.className !== cls) bar.className = cls;
-}
-
-/** Wrap to (-180, 180] so a link spinning after a fall reads sensibly. */
-function wrapDeg(deg: number): number {
-  const w = ((((deg + 180) % 360) + 360) % 360) - 180;
-  return w === -180 ? 180 : w;
 }

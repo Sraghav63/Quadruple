@@ -14,7 +14,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import numpy as np
 
-from quad_pendulum.params import RigParams
+from quad_pendulum.params import RigParams, all_configurations, parse_configuration, wrap_angle
 from quad_pendulum.sim import Simulation
 
 PUSH_FORCE = 0.1  # N, horizontal tap at the top of a link (0.2 N already topples links 3-4)
@@ -45,33 +45,51 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--speed", type=float, default=1.0, help="simulation speed factor, 0.1-2")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--tilt-deg", type=float, default=START_TILT_DEG, help="initial random tilt")
+    p.add_argument(
+        "--config",
+        default=None,
+        metavar="UUUD",
+        help="which links to balance up (U) or down (D), bottom link first; default all up. "
+        "C / Shift+C cycles configurations in the window; switching resets the run "
+        "(swing-up between equilibria is not implemented)",
+    )
     p.add_argument("--no-controller", action="store_true")
     p.add_argument("--headless", type=float, metavar="SECONDS", help="no window; print a summary")
     p.add_argument("--max-seconds", type=float, help=argparse.SUPPRESS)
     args = p.parse_args()
+    try:
+        args.config = parse_configuration(args.config, RigParams().n_links)
+    except ValueError as exc:
+        p.error(str(exc))
     args.speed = float(np.clip(args.speed, 0.1, 2.0))
     return args
 
 
-def make_sim(args: argparse.Namespace) -> Simulation:
-    sim = Simulation(RigParams(), seed=args.seed)
+def make_sim(args: argparse.Namespace, configuration: str | None = None) -> Simulation:
+    sim = Simulation(RigParams(), seed=args.seed, configuration=configuration or args.config)
     sim.reset(random_tilt_deg=args.tilt_deg)
     sim.controller_enabled = not args.no_controller
     return sim
+
+
+def deviation_deg(sim: Simulation, theta) -> np.ndarray:
+    """Link angles relative to the target equilibrium, in degrees."""
+    return np.rad2deg(wrap_angle(np.asarray(theta) - sim.theta_eq))
 
 
 def run_headless(args: argparse.Namespace) -> int:
     sim = make_sim(args)
     rate = round(sim.rig.timing.control_rate)
     max_theta = max_force = 0.0
+    print(f"configuration {sim.configuration} (bottom link first, U up / D down)")
     for second in range(1, int(np.ceil(args.headless)) + 1):
         for _ in range(min(rate, round((args.headless - (second - 1)) * rate))):
             sim.step()
             st = sim.status()
-            max_theta = max(max_theta, float(np.max(np.abs(np.rad2deg(st["theta"])))))
+            max_theta = max(max_theta, float(np.max(np.abs(deviation_deg(sim, st["theta"])))))
             max_force = max(max_force, abs(float(sim.plant.state()["force"])))
         print(
-            f"t={sim.t:6.2f} s  x={st['x']:+.3f} m  max|theta|={max_theta:6.3f} deg  "
+            f"t={sim.t:6.2f} s  x={st['x']:+.3f} m  max|dtheta|={max_theta:6.3f} deg  "
             f"max|force|={max_force:6.2f} N",
             flush=True,
         )
@@ -79,8 +97,9 @@ def run_headless(args: argparse.Namespace) -> int:
         if sim.fallen:
             break
     if sim.fallen:
-        print("FALLEN")
+        print(f"FALLEN (configuration {sim.configuration})")
         return 1
+    print(f"BALANCED (configuration {sim.configuration})")
     return 0
 
 
@@ -91,6 +110,7 @@ class Viewer:
         self.pg = pygame
         self.args = args
         self.sim = make_sim(args)
+        self.configs = all_configurations(RigParams().n_links)
         self.rig = self.sim.rig
         self.dt = self.rig.control_dt
         pygame.init()
@@ -120,12 +140,24 @@ class Viewer:
             return pg.font.Font(None, size + 6)
 
     # ---- simulation ------------------------------------------------------
-    def reset(self) -> None:
-        self.sim.reset(random_tilt_deg=START_TILT_DEG)
-        self.sim.set_reference(0.0)
+    def clear_run(self) -> None:
         self.hist.clear()
         self._next_sample = 0.0
         self.acc = 0.0
+
+    def reset(self) -> None:
+        self.sim.reset(random_tilt_deg=START_TILT_DEG)
+        self.sim.set_reference(0.0)
+        self.clear_run()
+
+    def cycle_configuration(self, step: int) -> None:
+        """Rebuild the simulation for another equilibrium; this is a reset, not a transition."""
+        i = self.configs.index(self.sim.configuration)
+        enabled = self.sim.controller_enabled
+        self.sim = make_sim(self.args, self.configs[(i + step) % len(self.configs)])
+        self.sim.controller_enabled = enabled
+        self.rig = self.sim.rig
+        self.clear_run()
 
     def advance(self, wall_dt: float) -> None:
         if self.paused or self.sim.fallen:
@@ -138,7 +170,7 @@ class Viewer:
             if self.sim.t >= self._next_sample:
                 self._next_sample = self.sim.t + PLOT_EVERY
                 st = self.sim.status()
-                self.hist.append((st["t"], st["x"], st["x_ref"], np.rad2deg(st["theta"])))
+                self.hist.append((st["t"], st["x"], st["x_ref"], deviation_deg(self.sim, st["theta"])))
             if self.sim.fallen:
                 break
         while self.hist and self.hist[0][0] < self.sim.t - PLOT_SECONDS:
@@ -165,6 +197,8 @@ class Viewer:
                 self.sim.controller_enabled = not self.sim.controller_enabled
             elif k == pg.K_r:
                 self.reset()
+            elif k == pg.K_c:
+                self.cycle_configuration(-1 if ev.mod & pg.KMOD_SHIFT else 1)
             elif k == pg.K_p:
                 self.paused = not self.paused
             elif pg.K_1 <= k <= pg.K_4:
@@ -208,10 +242,14 @@ class Viewer:
         pg, scr, sim, rig = self.pg, self.screen, self.sim, self.rig
         r = self.scene_rect
         half = rig.cart.rail_half_length
-        height = sum(link.length for link in rig.links)
+        # chain extent about the cart pivot at the target equilibrium (down links hang below)
+        reach = np.cumsum([link.length * (1.0 if c == "U" else -1.0)
+                           for link, c in zip(rig.links, sim.configuration)])
+        pivot = float(sim.plant.link_points()[0][1])  # hinge height above the rail line
+        zmax, zmin = max(0.0, pivot + float(reach.max())), min(0.0, pivot + float(reach.min()))
         margin = 0.18
-        self.scale = min(r.width / (2 * (half + margin)), r.height / (height + 0.45))
-        self.origin = (r.centerx, r.bottom - int(0.2 * self.scale) - 10)
+        self.scale = min(r.width / (2 * (half + margin)), r.height / (zmax - zmin + 0.45))
+        self.origin = (r.centerx, r.top + int((zmax + 0.2) * self.scale))
         pts = sim.plant.link_points()
         st = sim.status()
         ox, oy = self.origin
@@ -232,7 +270,7 @@ class Viewer:
         # cart target marker
         tx = self.w2s(st["x_ref"], 0)[0]
         pg.draw.polygon(scr, TARGET, [(tx, oy + 12), (tx - 8, oy + 28), (tx + 8, oy + 28)])
-        pg.draw.line(scr, TARGET, (tx, oy + 12), (tx, oy - int(height * self.scale)), 1)
+        pg.draw.line(scr, TARGET, (tx, oy + 12), (tx, oy - int(zmax * self.scale)), 1)
 
         # cart
         cx, _cy = self.w2s(pts[0][0], 0)
@@ -291,6 +329,8 @@ class Viewer:
             status, scol = "BALANCING", OK
         self.text(f"status  {status}", (x, y), scol)
         y += lh
+        self.text(f"config  {sim.configuration}  (bottom first)", (x, y), TARGET)
+        y += lh
         self.text(f"control {'ON' if on else 'OFF'}", (x, y), OK if on else BAD)
         y += lh + 4
         rtf_col = OK if self.rtf >= 0.95 * self.args.speed else (240, 150, 50)
@@ -311,11 +351,11 @@ class Viewer:
         y += 36
         self.bar(x, y, w, st["command"], rig.drive.accel_limit, f"accel cmd   {st['command']:+7.2f} (lim {rig.drive.accel_limit:.0f})")
         y += 40
-        self.text("link angles (abs)", (x, y), DIM, self.small)
+        self.text("link angle error from target (deg)", (x, y), DIM, self.small)
         y += 16
-        for i, th in enumerate(np.rad2deg(st["theta"])):
+        for i, th in enumerate(deviation_deg(sim, st["theta"])):
             pg.draw.rect(self.screen, LINK_COLORS[i % 4], (x, y + 4, 10, 10))
-            self.text(f"L{i + 1}  {th:+8.3f} deg", (x + 18, y))
+            self.text(f"L{i + 1} {sim.configuration[i]} {th:+8.3f} deg", (x + 18, y))
             y += lh
         y += 8
         help_lines = [
@@ -323,6 +363,7 @@ class Viewer:
             "mouse drag  set target",
             "1-4 push link right, +Shift left",
             "Space ctrl on/off   R reset",
+            "C / Shift+C next/prev config (resets)",
             "P pause   Esc quit",
         ]
         for line in help_lines:
@@ -333,7 +374,7 @@ class Viewer:
     def draw_plots(self, r) -> None:
         pg = self.pg
         half_w = r.width // 2
-        self.plot(pg.Rect(r.left + 8, r.top + 6, half_w - 12, r.height - 12), "link angles (deg)", "angles")
+        self.plot(pg.Rect(r.left + 8, r.top + 6, half_w - 12, r.height - 12), "link angle error from target (deg)", "angles")
         self.plot(pg.Rect(r.left + half_w + 4, r.top + 6, half_w - 12, r.height - 12), "cart x (m), target", "cart")
 
     def plot(self, r, title, kind) -> None:

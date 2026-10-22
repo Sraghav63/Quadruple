@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from quad_pendulum.model import make_rig_xml
-from quad_pendulum.params import RigParams, absolute_to_relative
+from quad_pendulum.params import RigParams, absolute_to_relative, equilibrium_angles
 from quad_pendulum.plant import Plant
 
 
@@ -203,3 +203,15 @@ def test_invalid_substep_timing_rejected():
     rig = RigParams()
     with pytest.raises(ValueError, match="evenly divide"):
         Plant(replace(rig, timing=replace(rig.timing, physics_dt=0.0003)))
+
+
+def test_fallen_is_measured_from_the_configuration_equilibrium():
+    plant = Plant(RigParams())
+    theta = equilibrium_angles("UUUD", 4)
+    plant.reset(theta)
+    # Default target is upright, so a hanging top link counts as fallen there.
+    assert plant.fallen()
+    assert not plant.fallen(theta_eq=theta)
+    plant.reset(theta + 0.1)
+    assert not plant.fallen(theta_eq=theta)
+    assert plant.fallen(theta_eq=theta, limit_rad=0.05)

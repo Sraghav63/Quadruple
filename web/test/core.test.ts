@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { LQRController } from '../src/sim/controller';
+import { LQRController, wrapAngle } from '../src/sim/controller';
 import { Plant } from '../src/sim/plant';
 import { createSimulation, DEFAULT_KNOBS, loadPreset, loadPresetIndex } from '../src/sim';
 import type { Preset, RigParams } from '../src/sim/types';
@@ -13,15 +13,22 @@ import c1 from './golden/links1.controller.json';
 import c2 from './golden/links2.controller.json';
 import c3 from './golden/links3.controller.json';
 import cShort from './golden/quad-short.controller.json';
+import cUUUD from './golden/quad.UUUD.controller.json';
+import cDDUU from './golden/quad.DDUU.controller.json';
 import pQuad from './golden/quad.plant.json';
+import pUUUD from './golden/quad.UUUD.plant.json';
 import p1 from './golden/links1.plant.json';
 
 const presets: Preset[] = [quad, links1, links2, links3, short];
 const controllers = [cQuad, c1, c2, c3, cShort];
 
 describe('firmware runtime', () => {
-  for (let p = 0; p < presets.length; p++) it(`matches ${presets[p].id} Python commands`, () => {
-    const trace = controllers[p], controller = new LQRController(presets[p].controller);
+  const cases = presets.map((preset, i) => ({ id: preset.id, trace: controllers[i], matrices: preset.controller }));
+  for (const trace of [cUUUD, cDDUU]) cases.push({
+    id: `quad/${trace.configuration}`, trace, matrices: quad.configurations[trace.configuration as 'UUUD' | 'DDUU'].controller,
+  });
+  for (const { id, trace, matrices } of cases) it(`matches ${id} Python commands`, () => {
+    const controller = new LQRController(matrices);
     const m = { t: 0, cartPosition: trace.cartPosition[0], jointAngles: new Float64Array(trace.jointAngles[0]) };
     controller.reset(m, trace.xRef[0]);
     let error = 0;
@@ -30,13 +37,34 @@ describe('firmware runtime', () => {
       const u = controller.step(m, trace.xRef[k]);
       error = Math.max(error, Math.abs(u - trace.u[k]) / Math.max(1, Math.abs(trace.u[k])));
     }
-    console.log('controller', presets[p].id, error);
+    console.log('controller', id, error);
     expect(error).toBeLessThan(1e-9);
+  });
+  it('wraps with Python endpoint conventions', () => {
+    expect(wrapAngle(Math.PI)).toBe(-Math.PI);
+    expect(wrapAngle(-Math.PI)).toBe(-Math.PI);
+    expect(wrapAngle(3 * Math.PI)).toBe(-Math.PI);
+    expect(wrapAngle(-3 * Math.PI)).toBe(-Math.PI);
+    for (const x of [-Math.PI - 1e-8, -Math.PI + 1e-8, Math.PI - 1e-8, Math.PI + 1e-8, 0.002]) {
+      expect(wrapAngle(x)).toBeGreaterThanOrEqual(-Math.PI);
+      expect(wrapAngle(x)).toBeLessThan(Math.PI);
+      expect(wrapAngle(x + 8 * Math.PI)).toBeCloseTo(wrapAngle(x), 13);
+    }
+  });
+  it('resets deviations and gives identical commands for whole encoder turns', () => {
+    const matrices = quad.configurations.DDUU.controller;
+    const a = new LQRController(matrices), b = new LQRController(matrices);
+    const m = { t: 0, cartPosition: 0.01, jointAngles: new Float64Array([Math.PI + 0.001, -0.002, -Math.PI + 0.003, -0.001]) };
+    const turned = { ...m, jointAngles: new Float64Array(m.jointAngles.map((v, i) => v + (i % 2 ? -4 : 2) * Math.PI)) };
+    a.reset(m); b.reset(turned);
+    for (let i = 0; i < 4; i++) expect(a.z[matrices.thetaIndex + i]).toBeCloseTo([0.001, -0.001, 0.002, 0.001][i], 13);
+    for (let k = 0; k < 100; k++) expect(a.step(m)).toBeCloseTo(b.step(turned), 8);
+    for (let i = 0; i < matrices.nz; i++) expect(a.z[i]).toBeCloseTo(b.z[i], 9);
   });
 });
 
 describe('MuJoCo open-loop parity', () => {
-  for (const [id, data] of [['quad', pQuad], ['links1', p1]] as const) {
+  for (const [id, data] of [['quad', pQuad], ['links1', p1], ['quad/UUUD', pUUUD]] as const) {
     for (const mode of ['frictionless', 'nominal'] as const) it(`${id} ${mode}`, () => {
       const trace = data[mode];
       const rig: RigParams = trace.rig;
@@ -70,6 +98,68 @@ describe('MuJoCo open-loop parity', () => {
 function run(sim: ReturnType<typeof createSimulation>, steps: number): void {
   for (let i = 0; i < steps; i++) sim.step();
 }
+
+describe('equilibrium configurations', () => {
+  for (const preset of presets) {
+    it(`${preset.id} exports every configuration with an all-up default`, () => {
+      const n = preset.rig.links.length;
+      expect(Object.keys(preset.configurations)).toHaveLength(2 ** n);
+      expect(Object.keys(preset.configurations)[0]).toBe('U'.repeat(n));
+      expect(preset.controller).toEqual(preset.configurations['U'.repeat(n)].controller);
+      for (const [cfg, data] of Object.entries(preset.configurations)) {
+        expect(cfg).toMatch(new RegExp(`^[UD]{${n}}$`));
+        expect(data.controller.configuration).toBe(cfg);
+        expect(data.controller.thetaEq).toEqual([...cfg].map(c => c === 'U' ? 0 : Math.PI));
+        expect(data.controller.closedLoopRadius).toBeLessThan(1);
+        expect(data.controller.observerRadius).toBeLessThan(1);
+      }
+      expect(preset.configurations['D'.repeat(n)].unstablePoles).toEqual([]);
+    });
+    for (const cfg of Object.keys(preset.configurations)) it(`${preset.id}/${cfg} survives a 20 cm step and 0.08 N tap from equilibrium`, () => {
+      const sim = createSimulation(preset, 0);
+      sim.setConfiguration(cfg);
+      sim.reset();
+      run(sim, 1000); sim.setReference(0.2);
+      run(sim, 2000); sim.push(preset.rig.links.length - 1, 0.08, 0.02);
+      run(sim, 3000);
+      expect(sim.configuration).toBe(cfg);
+      expect(sim.status().fallen).toBe(false);
+      expect(sim.status().thetaDeviation.every(v => Math.abs(v) < 0.6)).toBe(true);
+    });
+  }
+  it('resets around the selected equilibrium and reports absolute ghost angles', () => {
+    const sim = createSimulation(quad);
+    sim.setKnobs({ sensorNoiseScale: 0 });
+    sim.setConfiguration(' uuud ');
+    expect(sim.configuration).toBe('UUUD');
+    expect(Array.from(sim.status().theta)).toEqual([0, 0, 0, Math.PI]);
+    expect(sim.status().thetaEstimate[3]).toBeCloseTo(Math.PI, 13);
+    sim.reset({ randomTiltDeg: 0.05 });
+    expect(sim.status().thetaDeviation.every(v => Math.abs(v) <= 0.05 * Math.PI / 180)).toBe(true);
+    run(sim, 20); sim.controllerEnabled = false;
+    sim.setConfiguration('DDDD');
+    expect(sim.status().t).toBe(0);
+    expect(sim.status().command).toBe(0);
+    expect(sim.status().driveEnabled).toBe(true);
+    expect(Array.from(sim.status().theta)).toEqual(Array(4).fill(Math.PI));
+    for (const cfg of ['UUU', 'UUUX', '__proto__']) expect(() => sim.setConfiguration(cfg)).toThrow();
+    expect(sim.configuration).toBe('DDDD');
+  });
+  it('detects falls relative to the target across the angle wrap', () => {
+    const sim = createSimulation(quad);
+    sim.setConfiguration('DDDD');
+    sim.reset({ theta: [-Math.PI + 0.001, Math.PI, -Math.PI, 3 * Math.PI] });
+    sim.step();
+    expect(sim.status().fallen).toBe(false);
+    expect(sim.status().thetaDeviation.every(v => Math.abs(v) < 0.01)).toBe(true);
+    sim.reset({ theta: [Math.PI, Math.PI + 0.61, Math.PI, Math.PI] });
+    sim.step();
+    expect(sim.status().fallen).toBe(true);
+    expect(sim.status().driveEnabled).toBe(false);
+    sim.setConfiguration('UUUD');
+    expect(sim.status().fallen).toBe(false);
+  });
+});
 
 describe('closed loop', () => {
   it('survives ten seconds from 0.05 degree tilt', () => {

@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from quad_pendulum.controller import LQRController
-from quad_pendulum.params import RigParams
+from quad_pendulum.params import RigParams, parse_configuration
 
 
 def main() -> int:
@@ -20,9 +20,19 @@ def main() -> int:
         type=Path,
         default=Path(__file__).resolve().parents[1] / "firmware/teensy/quad_pendulum/qp_gains.h",
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        metavar="UUUD",
+        help="links balanced up (U) or down (D), bottom link first; default all up",
+    )
     args = parser.parse_args()
     rig = RigParams()
-    controller = LQRController(rig)
+    try:
+        configuration = parse_configuration(args.config, rig.n_links)
+    except ValueError as exc:
+        parser.error(str(exc))
+    controller = LQRController(rig, configuration=configuration)
     # The upstream formatter emits e.g. 0f / 30f. C++ requires a decimal point
     # or exponent before f; repair lexical spelling without changing any value.
     header = re.sub(r"(?<![\w.+-])(-?\d+)f\b", r"\1.0f", controller.to_c_header())
@@ -40,7 +50,7 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(provenance + header + limits)
     print(
-        f"Wrote {args.output} (NZ={controller.nz}, NY={1 + rig.n_links}, "
+        f"Wrote {args.output} (configuration={configuration}, NZ={controller.nz}, NY={1 + rig.n_links}, "
         f"closed-loop radius={controller.closed_loop_radius:.8f})"
     )
     return 0

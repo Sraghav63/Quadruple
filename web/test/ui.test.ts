@@ -2,8 +2,34 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bindControls, type Actions } from '../src/ui/controls';
 import { History, PlotCanvas, WINDOW_S } from '../src/ui/plots';
 import type { Renderer } from '../src/ui/renderer';
+import { parseHash, resolveConfiguration } from '../src/ui/location';
+import quad from '../public/presets/quad.json';
+import links2 from '../public/presets/links2.json';
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('preset and configuration hashes', () => {
+  const list = [quad, links2];
+  it.each(['#quad', 'quad'])('keeps legacy %s links all-up', hash => {
+    const parsed = parseHash(hash, list);
+    expect(parsed.presetId).toBe('quad');
+    expect(resolveConfiguration(quad, parsed.configuration)).toBe('UUUU');
+  });
+  it.each(['UUUD', 'DDUU', 'DDDD'])('parses #quad/%s', cfg => {
+    expect(parseHash(`#quad/${cfg}`, list)).toEqual({ presetId: 'quad', configuration: cfg });
+    expect(resolveConfiguration(quad, cfg)).toBe(cfg);
+  });
+  it('normalizes case, respects link count and falls back for malformed hashes', () => {
+    expect(parseHash('#links2/du', list)).toEqual({ presetId: 'links2', configuration: 'DU' });
+    expect(resolveConfiguration(links2, 'DU')).toBe('DU');
+    expect(resolveConfiguration(links2, 'UUUD')).toBe('UU');
+    for (const hash of ['#quad/nope', '#quad/UUUD/extra', '#quad/']) {
+      expect(resolveConfiguration(quad, parseHash(hash, list).configuration)).toBe('UUUU');
+    }
+    for (const hash of ['', '#unknown', '#../nope']) expect(parseHash(hash, list).presetId).toBe('quad');
+    expect(resolveConfiguration(quad, '__proto__')).toBe('UUUU');
+  });
+});
 
 class PointerCanvas extends EventTarget {
   private captured = new Set<number>();

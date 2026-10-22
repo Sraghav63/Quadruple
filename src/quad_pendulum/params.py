@@ -10,6 +10,9 @@ Conventions used across the package:
 - Joint angles q_i are what the encoders read: link i relative to link i-1
   (link 0 is the cart), zero when straight up, positive tilting toward +x.
 - Absolute angles theta_i = q_1 + ... + q_i are each link's tilt from vertical.
+- An equilibrium configuration is a string of "U" (up) / "D" (down) per link,
+  bottom link first: "UUUD" has the top link hanging down from three upright
+  links. Its absolute angles are 0 for U and pi for D (`equilibrium_angles`).
 - The controller's input is a cart acceleration command in m/s^2. The servo
   drive turns it into a velocity setpoint and closes a velocity loop.
 """
@@ -134,6 +137,35 @@ class RigParams:
             for i in range(n)
         )
         return replace(self, links=links)
+
+
+def parse_configuration(configuration: str | None, n_links: int) -> str:
+    """Validate a "U"/"D" string (bottom link first); None means all upright."""
+    if configuration is None:
+        return "U" * n_links
+    config = str(configuration).strip().upper()
+    if len(config) != n_links or any(c not in "UD" for c in config):
+        raise ValueError(
+            f"configuration must be {n_links} characters of U (up) or D (down), bottom link first"
+        )
+    return config
+
+
+def all_configurations(n_links: int) -> list[str]:
+    """Every up/down combination, all-upright first."""
+    return [
+        "".join("D" if (k >> i) & 1 else "U" for i in range(n_links)) for k in range(2**n_links)
+    ]
+
+
+def equilibrium_angles(configuration: str | None, n_links: int) -> np.ndarray:
+    """Absolute link angles of an equilibrium: 0 for up, pi for down."""
+    return np.array([np.pi if c == "D" else 0.0 for c in parse_configuration(configuration, n_links)])
+
+
+def wrap_angle(angle):
+    """Wrap to [-pi, pi)."""
+    return (np.asarray(angle, dtype=float) + np.pi) % (2 * np.pi) - np.pi
 
 
 def relative_to_absolute(q: np.ndarray) -> np.ndarray:

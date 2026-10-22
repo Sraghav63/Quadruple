@@ -11,7 +11,7 @@ The browser runs the same runtime as the firmware:
   reset:  z = 0; z[0] = y[0]; z[3:3+n] = y[1:]
   ref:    z[0] -= x_ref - previous_x_ref
   step:   z += L (y - C z); u = clamp(-K z); z = A z + B u
-with y = [cart_position - x_ref, cumulative sum of the joint encoder angles].
+with y = [cart_position - x_ref, wrap(cumsum(joint_angles) - theta_eq)].
 """
 
 from __future__ import annotations
@@ -24,7 +24,14 @@ import numpy as np
 
 from quad_pendulum.controller import LQRController
 from quad_pendulum.linear import unstable_poles
-from quad_pendulum.params import Measurement, RigParams, absolute_to_relative
+from quad_pendulum.params import (
+    Measurement,
+    RigParams,
+    absolute_to_relative,
+    all_configurations,
+    equilibrium_angles,
+    wrap_angle,
+)
 from quad_pendulum.plant import Plant
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +74,8 @@ def rig_json(rig: RigParams) -> dict:
 
 def controller_json(ctl: LQRController) -> dict:
     return {
+        "configuration": ctl.configuration,
+        "thetaEq": ctl.theta_eq.tolist(),
         "nz": int(ctl.nz),
         "ny": int(1 + ctl.n),
         "dt": float(ctl.dt),
@@ -90,12 +99,19 @@ def controller_golden(rig: RigParams, ctl: LQRController, steps: int = 400) -> d
     t = np.arange(steps) * rig.control_dt
     meas = []
     for k in range(steps):
-        theta = 0.004 * np.sin(2 * np.pi * (1.5 + np.arange(n)) * t[k]) + rng.normal(0, 3e-4, n)
-        meas.append((0.02 * np.sin(2 * np.pi * 0.7 * t[k]), absolute_to_relative(theta)))
+        theta = ctl.theta_eq + 0.004 * np.sin(2 * np.pi * (1.5 + np.arange(n)) * t[k]) + rng.normal(0, 3e-4, n)
+        q = absolute_to_relative(theta)
+        if "D" in ctl.configuration:
+            # Encoders cross +/-pi at folded joints; whole turns must not change y.
+            q = wrap_angle(q)
+            if k % 7 == 0:
+                q[k % n] += 2 * np.pi * (-1 if k % 2 else 1)
+        meas.append((0.02 * np.sin(2 * np.pi * 0.7 * t[k]), q))
     x_ref = [0.0 if k < steps // 2 else 0.1 for k in range(steps)]
     ctl.reset(Measurement(0.0, meas[0][0], meas[0][1]), x_ref=x_ref[0])
     u = [ctl.step(Measurement(t[k], meas[k][0], meas[k][1]), x_ref=x_ref[k]) for k in range(steps)]
     return {
+        "configuration": ctl.configuration,
         "xRef": x_ref,
         "cartPosition": [m[0] for m in meas],
         "jointAngles": [m[1].tolist() for m in meas],
@@ -103,7 +119,7 @@ def controller_golden(rig: RigParams, ctl: LQRController, steps: int = 400) -> d
     }
 
 
-def plant_golden(rig: RigParams, frictionless: bool, seconds: float = 1.0) -> dict:
+def plant_golden(rig: RigParams, frictionless: bool, seconds: float = 1.0, configuration: str | None = None) -> dict:
     """Open-loop MuJoCo response to a prescribed accel command (no sensor noise)."""
     if frictionless:
         rig = replace(
@@ -113,7 +129,8 @@ def plant_golden(rig: RigParams, frictionless: bool, seconds: float = 1.0) -> di
         )
     plant = Plant(rig, seed=0)
     n = rig.n_links
-    theta0 = np.deg2rad(np.linspace(0.5, -0.3, n))
+    theta_eq = equilibrium_angles(configuration, n)
+    theta0 = theta_eq + np.deg2rad(np.linspace(0.5, -0.3, n))
     plant.reset(theta=theta0)
     steps = round(seconds * rig.timing.control_rate)
     cmd, rows = [], []
@@ -131,7 +148,7 @@ def plant_golden(rig: RigParams, frictionless: bool, seconds: float = 1.0) -> di
                 "force": float(s["force"]),
             }
         )
-        if plant.fallen():
+        if plant.fallen(theta_eq=theta_eq):
             break
     return {"rig": rig_json(rig), "theta0": theta0.tolist(), "accelCommand": cmd, "states": rows}
 
@@ -141,26 +158,45 @@ def main() -> None:
     GOLDEN.mkdir(parents=True, exist_ok=True)
     index = []
     for pid, name, desc, rig in presets():
-        ctl = LQRController(rig)
+        configurations = {}
+        for cfg in all_configurations(rig.n_links):
+            ctl = LQRController(rig, configuration=cfg)
+            configurations[cfg] = {
+                "controller": controller_json(ctl),
+                "unstablePoles": unstable_poles(rig, cfg).tolist(),
+            }
+        default = configurations["U" * rig.n_links]
         doc = {
             "id": pid,
             "name": name,
             "description": desc,
-            "unstablePoles": unstable_poles(rig).tolist(),
+            "unstablePoles": default["unstablePoles"],
             "rig": rig_json(rig),
-            "controller": controller_json(ctl),
+            "controller": default["controller"],
+            "configurations": configurations,
         }
-        (PRESETS / f"{pid}.json").write_text(json.dumps(doc))
+        (PRESETS / f"{pid}.json").write_text(json.dumps(doc, separators=(",", ":")))
         index.append({"id": pid, "name": name, "description": desc})
         golden = {"preset": pid, **controller_golden(rig, LQRController(rig))}
         (GOLDEN / f"{pid}.controller.json").write_text(json.dumps(golden))
+        if pid == "quad":
+            for cfg in ("UUUD", "DDUU"):
+                golden = {"preset": pid, **controller_golden(rig, LQRController(rig, configuration=cfg))}
+                (GOLDEN / f"{pid}.{cfg}.controller.json").write_text(json.dumps(golden))
+            mixed = {
+                mode: plant_golden(
+                    rig, frictionless=mode == "frictionless", seconds=0.25, configuration="UUUD"
+                )
+                for mode in ("frictionless", "nominal")
+            }
+            (GOLDEN / f"{pid}.UUUD.plant.json").write_text(json.dumps(mixed))
         if pid in ("quad", "links1"):
             plant = {
                 "frictionless": plant_golden(rig, frictionless=True),
                 "nominal": plant_golden(rig, frictionless=False),
             }
             (GOLDEN / f"{pid}.plant.json").write_text(json.dumps(plant))
-        print(f"{pid:11s} nz={ctl.nz:2d} closed-loop radius={ctl.closed_loop_radius:.6f}")
+        print(f"{pid:11s} configurations={len(configurations):2d} nz={default['controller']['nz']:2d}")
     (PRESETS / "index.json").write_text(json.dumps(index, indent=2))
     print(f"Wrote {len(index)} presets to {PRESETS.relative_to(ROOT)} and golden traces to {GOLDEN.relative_to(ROOT)}")
 

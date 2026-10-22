@@ -12,7 +12,7 @@ from collections import deque
 import numpy as np
 
 from quad_pendulum.controller import LQRController
-from quad_pendulum.params import RigParams
+from quad_pendulum.params import RigParams, equilibrium_angles, parse_configuration
 from quad_pendulum.plant import Plant
 
 
@@ -23,12 +23,17 @@ class Simulation:
         *,
         controller_rig: RigParams | None = None,
         seed: int | None = 0,
+        configuration: str | None = None,
     ) -> None:
         """`rig` is the true plant; `controller_rig` is what the controller believes
-        (defaults to the same). Pass a perturbed `rig` to test model mismatch."""
+        (defaults to the same). Pass a perturbed `rig` to test model mismatch.
+        `configuration` picks the equilibrium to balance ("UUUD" = top link down,
+        bottom link first); the default is all upright."""
         self.rig = rig or RigParams()
+        self.configuration = parse_configuration(configuration, self.rig.n_links)
+        self.theta_eq = equilibrium_angles(self.configuration, self.rig.n_links)
         self.plant = Plant(self.rig, seed=seed)
-        self.controller = LQRController(controller_rig or self.rig)
+        self.controller = LQRController(controller_rig or self.rig, configuration=self.configuration)
         self.rng = np.random.default_rng(seed)
         self.controller_enabled = True
         self.x_ref = 0.0
@@ -42,12 +47,12 @@ class Simulation:
         return self.plant.t
 
     def reset(self, theta=None, *, random_tilt_deg: float = 0.0, cart_x: float = 0.0) -> None:
-        """Start upright (or at `theta`, absolute radians), optionally with random
-        tilt of each link. The controller is told the true starting pose, like a
+        """Start at the target equilibrium (or at `theta`, absolute radians),
+        optionally with a random tilt of each link about the equilibrium. The controller is told the true starting pose, like a
         rig released from a holding jig after a sensor read."""
         n = self.rig.n_links
         if theta is None:
-            theta = np.deg2rad(self.rng.uniform(-random_tilt_deg, random_tilt_deg, n))
+            theta = self.theta_eq + np.deg2rad(self.rng.uniform(-random_tilt_deg, random_tilt_deg, n))
         self.plant.reset(theta=np.asarray(theta, dtype=float), cart_x=cart_x)
         self.controller.reset(self.plant.measure())
         self._pending = deque([0.0] * self.rig.timing.compute_delay_steps)
@@ -72,7 +77,7 @@ class Simulation:
         applied = self._pending.popleft()
         self.last_command = applied
         self.plant.step(applied)
-        if self.plant.fallen():
+        if self.plant.fallen(theta_eq=self.theta_eq):
             self.fallen = True
 
     def run(self, seconds: float) -> None:
@@ -83,6 +88,7 @@ class Simulation:
         s = self.plant.state()
         return {
             "t": self.t,
+            "configuration": self.configuration,
             "x": s["x"],
             "v": s["v"],
             "a": s["a"],

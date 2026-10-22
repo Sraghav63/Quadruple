@@ -1,5 +1,11 @@
 import type { ControllerMatrices, Measurement } from './types';
 
+/** Same modulo convention as Python: [-pi, pi). */
+export function wrapAngle(angle: number): number {
+  const w = (angle + Math.PI) % (2 * Math.PI);
+  return (w < 0 ? w + 2 * Math.PI : w) - Math.PI;
+}
+
 /** Fixed matrix firmware runtime. All scratch storage is allocated once. */
 export class LQRController {
   readonly z: Float64Array;
@@ -20,7 +26,7 @@ export class LQRController {
     let theta = 0;
     for (let i = 1; i < m.ny; i++) {
       theta += measurement.jointAngles[i - 1];
-      z[m.thetaIndex + i - 1] = theta;
+      z[m.thetaIndex + i - 1] = wrapAngle(theta - m.thetaEq[i - 1]);
     }
     this.xRef = xRef;
   }
@@ -34,7 +40,7 @@ export class LQRController {
       if (i > 0) theta += measurement.jointAngles[i - 1];
       let predicted = 0;
       for (let j = 0; j < m.nz; j++) predicted += m.C[i][j] * z[j];
-      innovation[i] = (i === 0 ? measurement.cartPosition - xRef : theta) - predicted;
+      innovation[i] = (i === 0 ? measurement.cartPosition - xRef : wrapAngle(theta - m.thetaEq[i - 1])) - predicted;
     }
     let u = 0;
     for (let i = 0; i < m.nz; i++) {

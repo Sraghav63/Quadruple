@@ -8,9 +8,9 @@ import { Hud } from "./ui/hud";
 import { Panel } from "./ui/panel";
 import { bindControls } from "./ui/controls";
 import { THEME } from "./ui/colors";
+import { parseHash, resolveConfiguration } from "./ui/location";
 
 const REPO_URL = ""; // set to the GitHub repo URL to show the link in the header
-const DEFAULT_PRESET = "quad";
 const RAD2DEG = 180 / Math.PI;
 const PUSH_SECONDS = 0.02;
 
@@ -69,9 +69,13 @@ function describe(preset: SimulationApi["preset"]): void {
     "14-bit joint encoders, like the real build. The faint ghost chain is what the controller thinks the pendulum is doing.");
   p("Joint stiction (friction that grips at rest) makes the pendulum wander a few degrees instead of sitting perfectly still. " +
     "A quadruple pendulum only tolerates light taps: about 0.1 N for 20 ms on the top link.");
-  const times = preset.unstablePoles.map((q) => `${(Math.LN2 / q * 1000).toFixed(0)} ms`);
-  p(`Left alone, this rig (${preset.name}) falls over on ${preset.unstablePoles.length} unstable modes. ` +
+  const poles = preset.configurations[sim.configuration].unstablePoles;
+  const times = poles.map((q) => `${(Math.LN2 / q * 1000).toFixed(0)} ms`);
+  if (poles.length) p(`This rig (${preset.name}) in configuration ${sim.configuration} has ${poles.length} unstable modes. ` +
     `Each one doubles in size every ${times.join(", ")} (ln 2 / pole, fastest first), which is why it needs a fast, accurate controller.`);
+  else p(`Configuration ${sim.configuration} has zero unstable modes: the all-down chain is naturally stable, and the controller just damps its motion.`);
+  p("Configuration letters run from the bottom link to the top: U is up, D is down. Changing a target resets the rig near that equilibrium. " +
+    "Transitions between equilibria need a swing-up controller, which is not implemented.");
   p("Keys: <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> move the target, <kbd>1</kbd>-<kbd>4</kbd> push a link right " +
     "(<kbd>Shift</kbd> for left), <kbd>Space</kbd> toggles the controller, <kbd>R</kbd> resets, <kbd>P</kbd> pauses. " +
     "Clicking a link pushes it toward the side you clicked.");
@@ -102,15 +106,33 @@ function install(newSim: SimulationApi): void {
   syncButtons();
 }
 
-async function selectPreset(id: string): Promise<void> {
+function selectConfiguration(configuration: string): void {
+  ++loadToken;
+  sim.setConfiguration(configuration);
+  hist.clear();
+  panel.syncConfiguration();
+  renderer.setSim(sim);
+  describe(sim.preset);
+  syncButtons();
+  replaceHash(sim.preset.id);
+}
+
+async function selectPreset(id: string, configuration?: string): Promise<void> {
   const token = ++loadToken;
   try {
+    if (sim && sim.preset.id === id) {
+      selectConfiguration(resolveConfiguration(sim.preset, configuration));
+      loadError.hidden = true;
+      return;
+    }
     const preset = await loadPreset(id);
     if (token !== loadToken) return;
     loadError.hidden = true;
-    install(createSimulation(preset));
+    const newSim = createSimulation(preset);
+    newSim.setConfiguration(resolveConfiguration(preset, configuration));
+    install(newSim);
     panel.setActive(id);
-    if (location.hash.slice(1) !== id) replaceHash(id);
+    replaceHash(id);
   } catch (err) {
     if (token !== loadToken) return;
     loadError.hidden = false;
@@ -120,11 +142,12 @@ async function selectPreset(id: string): Promise<void> {
 }
 
 function replaceHash(id: string): void {
-  window.history.replaceState(null, "", `#${id}`);
+  window.history.replaceState(null, "", `#${id}/${sim.configuration}`);
 }
 
 panel = new Panel({
   onPreset: (id) => { void selectPreset(id); },
+  onConfiguration: (cfg) => selectConfiguration(cfg),
   onSpeed: (v) => { speed = v; },
   onTapForce: (f) => { tapForce = f; },
   onPush: push,
@@ -157,7 +180,7 @@ function frame(now: number): void {
 
     const n = sim.rig.links.length;
     hist.maybeSample(st.t, (out, o) => {
-      for (let i = 0; i < n; i++) out[o + i] = st.theta[i] ?? 0;
+      for (let i = 0; i < n; i++) out[o + i] = st.thetaDeviation[i] ?? 0;
       out[o + n] = st.x;
       out[o + n + 1] = st.xRef;
     });
@@ -173,11 +196,13 @@ function frame(now: number): void {
 
 async function start(): Promise<void> {
   const list = await loadPresetIndex();
-  const wanted = location.hash.slice(1);
-  const id = list.some((p) => p.id === wanted) ? wanted : list.some((p) => p.id === DEFAULT_PRESET) ? DEFAULT_PRESET : list[0]!.id;
+  const { presetId: id, configuration } = parseHash(location.hash, list);
   panel.setPresets(list, id);
   const preset = await loadPreset(id);
-  install(createSimulation(preset));
+  const newSim = createSimulation(preset);
+  newSim.setConfiguration(resolveConfiguration(preset, configuration));
+  install(newSim);
+  replaceHash(id);
 
   bindControls(canvas, renderer, {
     togglePause: () => { paused = !paused; syncButtons(); },
@@ -188,8 +213,8 @@ async function start(): Promise<void> {
     push,
   });
   window.addEventListener("hashchange", () => {
-    const h = location.hash.slice(1);
-    if (h && h !== sim.preset.id) void selectPreset(h);
+    const h = parseHash(location.hash, list);
+    if (h.presetId !== sim.preset.id || h.configuration !== sim.configuration) void selectPreset(h.presetId, h.configuration);
   });
   new ResizeObserver(() => { renderer.resize(); anglesPlot.resize(); xPlot.resize(); }).observe($("stage-wrap"));
   renderer.resize(); anglesPlot.resize(); xPlot.resize();

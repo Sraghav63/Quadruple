@@ -14,6 +14,11 @@ Optional leaky angle integrals, servo error and joint torque states all enter
 the same exported A/B/C/K/L matrices; there is no separate runtime compensator.
 
 Measurements: cart position and the n encoder angles (converted to absolute).
+
+The design can be about any equilibrium with each link straight up or down
+(`configuration`, e.g. "UUUD", bottom link first). The angle states are then
+deviations from the equilibrium angles theta*, and the runtime subtracts
+theta* (wrapped to +/-pi) from the absolute angles before correction.
 """
 
 from __future__ import annotations
@@ -23,8 +28,15 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 from scipy.linalg import expm, solve_discrete_are
 
-from quad_pendulum.linear import mass_terms, state_space
-from quad_pendulum.params import Measurement, RigParams, relative_to_absolute
+from quad_pendulum.linear import horizontal_moments, linearized_mass, state_space
+from quad_pendulum.params import (
+    Measurement,
+    RigParams,
+    equilibrium_angles,
+    parse_configuration,
+    relative_to_absolute,
+    wrap_angle,
+)
 
 
 @dataclass(frozen=True)
@@ -97,6 +109,20 @@ class ControllerConfig:
             object.__setattr__(self, "joint_angle_weights", tuple(weights))
 
 
+def default_config(configuration: str | None = None) -> ControllerConfig:
+    """Default tuning for an equilibrium (None or all "U" = upright).
+
+    Configurations with hanging links have lightly damped swinging modes coupled
+    to the inverted ones. A stiffer joint-bend penalty, a faster angle estimate
+    and a weaker low-frequency attitude cost lift the hardest ones (DDUU, DUUU)
+    from about 40-80% to about 85-95% survival in check_robustness.py; with the
+    upright tuning DDUU falls even without model mismatch.
+    """
+    if configuration is None or "D" not in configuration.upper():
+        return ControllerConfig()
+    return ControllerConfig(joint_angle_tol=0.005, link_accel_noise=2.5, angle_integral_tol=0.003)
+
+
 def _c2d(a: np.ndarray, b: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarray]:
     nx = a.shape[0]
     m = np.zeros((nx + b.shape[1], nx + b.shape[1]))
@@ -107,10 +133,17 @@ def _c2d(a: np.ndarray, b: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarra
 
 
 class LQRController:
-    def __init__(self, rig: RigParams, config: ControllerConfig | None = None) -> None:
+    def __init__(
+        self,
+        rig: RigParams,
+        config: ControllerConfig | None = None,
+        configuration: str | None = None,
+    ) -> None:
         self.rig = rig
-        self.config = config or ControllerConfig()
         self.n = rig.n_links
+        self.configuration = parse_configuration(configuration, rig.n_links)
+        self.config = config or default_config(self.configuration)
+        self.theta_eq = equilibrium_angles(self.configuration, rig.n_links)
         self.delay = rig.timing.compute_delay_steps
         self.dt = rig.control_dt
         self._design()
@@ -124,8 +157,9 @@ class LQRController:
             design_rig = replace(
                 self.rig, drive=replace(self.rig.drive, model_lag=cfg.design_model_lag)
             )
-        a_c, b_c = state_space(design_rig)
-        mp, inertia, moment = mass_terms(design_rig)
+        a_c, b_c = state_space(design_rig, self.configuration)
+        mass = linearized_mass(design_rig, self.configuration)
+        moment = horizontal_moments(design_rig, self.configuration)
         if cfg.model_servo_dynamics:
             # Linearise the same *identified* velocity servo, including the
             # pendulum reaction on the cart. Extra state e_v = v_setpoint - v.
@@ -174,7 +208,7 @@ class LQRController:
         # Hinge disturbance model in angular coordinates. Unmodelled reaction
         # on the cart/drive is covered separately by cart acceleration noise.
         torque_input = np.zeros((torque_start, n))
-        torque_input[3 + n : 3 + 2 * n] = np.linalg.solve(mp + np.diag(inertia), bend.T)
+        torque_input[3 + n : 3 + 2 * n] = np.linalg.solve(mass, bend.T)
         if cfg.disturbance_time_constant is not None:
             augmented = np.zeros((torque_start + n, torque_start + n))
             augmented[:torque_start, :torque_start] = a_c
@@ -202,7 +236,7 @@ class LQRController:
             bz[nz - 1, 0] = 1.0  # newest command enters the queue
         self.nx, self.nz, self.az, self.bz = nx, nz, az, bz
         self.physical_nx = physical_nx
-        layout = ["x - x_ref", "v", "a", "theta_1..n", "omega_1..n"]
+        layout = ["x - x_ref", "v", "a", "theta_1..n - theta_eq", "omega_1..n"]
         if cfg.model_servo_dynamics:
             layout.append("servo_velocity_error")
         if cfg.angle_integral_time_constant is not None:
@@ -273,7 +307,7 @@ class LQRController:
     # ----------------------------------------------------------------- runtime
     def _y(self, meas: Measurement, x_ref: float) -> np.ndarray:
         theta = relative_to_absolute(np.asarray(meas.joint_angles, dtype=float))
-        return np.concatenate([[meas.cart_position - x_ref], theta])
+        return np.concatenate([[meas.cart_position - x_ref], wrap_angle(theta - self.theta_eq)])
 
     def reset(self, meas: Measurement, x_ref: float = 0.0) -> None:
         """Initialise the estimate from one reading, at rest, with nothing in flight."""
@@ -297,7 +331,8 @@ class LQRController:
 
     @property
     def theta_estimate(self) -> np.ndarray:
-        return self.z[3 : 3 + self.n].copy()
+        """Estimated absolute link angles."""
+        return self.z[3 : 3 + self.n] + self.theta_eq
 
     # ----------------------------------------------------------------- export
     def to_c_header(self) -> str:
@@ -309,8 +344,10 @@ class LQRController:
 
         lines = [
             "// Generated by quad_pendulum.controller.LQRController.to_c_header()",
+            f"// configuration (bottom link first, U = up, D = down): {self.configuration}",
             f"// z = [{self.state_layout}]",
-            "// reset: zero all states; initialise z[0] and z[3..3+n-1] from the sensors",
+            "// y = [x - x_ref, wrap(theta_i - QP_THETA_EQ[i])], theta_i = sum of encoder angles",
+            "// reset: zero all states; initialise z[0] and z[3..3+n-1] from y",
             "// reference change: z[0] -= x_ref - previous_x_ref before correction",
             "// each period: z += L (y - C z); u = clamp(-K z); z = A z + B u",
             "#pragma once",
@@ -318,6 +355,8 @@ class LQRController:
             f"#define QP_NY {1 + self.n}",
             f"#define QP_DT {self.dt:.9e}f",
             f"#define QP_ACCEL_LIMIT {self.rig.drive.accel_limit:.9e}f",
+            f'#define QP_CONFIGURATION "{self.configuration}"',
+            arr("QP_THETA_EQ", self.theta_eq),
             arr("QP_K", self.k),
             arr("QP_L", self.l),
             arr("QP_A", self.az),

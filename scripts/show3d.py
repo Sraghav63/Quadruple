@@ -11,7 +11,7 @@ import socketserver
 import webbrowser
 from pathlib import Path
 
-from quad_pendulum.params import RigParams
+from quad_pendulum.params import RigParams, parse_configuration
 from quad_pendulum.sim import Simulation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,14 +39,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seconds", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--config",
+        default=None,
+        metavar="UUUD",
+        help="links balanced up (U) or down (D), bottom link first; default all up",
+    )
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--export-only", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    try:
+        args.config = parse_configuration(args.config, RigParams().n_links)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
-def generate_trajectory(seconds: float, seed: int) -> dict:
+def generate_trajectory(seconds: float, seed: int, configuration: str | None = None) -> dict:
     rig = RigParams()
-    sim = Simulation(rig, seed=seed)
+    sim = Simulation(rig, seed=seed, configuration=configuration)
     sim.reset(random_tilt_deg=0.05)
     script = sorted(SCRIPT, key=lambda item: item[0])
     frames = []
@@ -71,6 +82,7 @@ def generate_trajectory(seconds: float, seed: int) -> dict:
         )
     return {
         "links": rig.n_links,
+        "configuration": sim.configuration,
         "linkLengths": [link.length for link in rig.links],
         "railHalfLength": rig.cart.rail_half_length,
         "fps": FPS,
@@ -93,7 +105,7 @@ def bind_server(handler, preferred_port: int) -> ReusableTCPServer:
 def main() -> None:
     args = parse_args()
     VIEWER_DIR.mkdir(parents=True, exist_ok=True)
-    trajectory = generate_trajectory(args.seconds, args.seed)
+    trajectory = generate_trajectory(args.seconds, args.seed, args.config)
     TRAJECTORY_PATH.write_text(json.dumps(trajectory), encoding="utf-8")
     print(f"Wrote {TRAJECTORY_PATH} ({len(trajectory['frames'])} frames)")
     if trajectory["fallen"]:
