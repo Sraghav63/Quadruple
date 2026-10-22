@@ -270,3 +270,7 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
   .dock { bottom: 12px; gap: 4px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+#configuration-picker { margin-top: 8px; width: 100%; }
+#transition-progress { width: 100%; accent-color: var(--accent, #b6e47a); }
+.configuration button:disabled, #configuration-picker:disabled { opacity: .55; cursor: wait; }

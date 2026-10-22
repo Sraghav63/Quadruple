@@ -12,6 +12,10 @@ is baked into `qp_gains.h` as `QP_CONFIGURATION` and `QP_THETA_EQ[]` (0 for up,
 pi for down); the sketch controls `wrap(theta_i - QP_THETA_EQ[i])`. One build
 balances one configuration. The shipped header is all up.
 
+The firmware does not run transitions (swing-ups and flips) yet. That needs the
+trajectory knots from `data/transitions/` and the time-varying LQR and Kalman
+design, or precomputed per-step gains, in flash; today it only balances.
+
 Open `teensy/quad_pendulum/quad_pendulum.ino` in Teensyduino, select Teensy 4.1,
 and build with its standard Arduino, SPI and IntervalTimer libraries. No moteus
 library is required until the two hardware stubs are implemented. Both stubs

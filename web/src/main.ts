@@ -50,6 +50,8 @@ function resetSim(): void {
   sim.controllerEnabled = true;
   sim.reset();
   hist.clear();
+  panel.syncConfiguration();
+  replaceHash(sim.preset.id);
   syncButtons();
 }
 
@@ -69,13 +71,15 @@ function describe(preset: SimulationApi["preset"]): void {
     "14-bit joint encoders, like the real build. The faint ghost chain is what the controller thinks the pendulum is doing.");
   p("Joint stiction (friction that grips at rest) makes the pendulum wander a few degrees instead of sitting perfectly still. " +
     "A quadruple pendulum only tolerates light taps: about 0.1 N for 20 ms on the top link.");
-  const poles = preset.configurations[sim.configuration].unstablePoles;
+  const cfg = preset.controller.configuration;
+  const poles = preset.configurations[cfg].unstablePoles;
   const times = poles.map((q) => `${(Math.LN2 / q * 1000).toFixed(0)} ms`);
-  if (poles.length) p(`This rig (${preset.name}) in configuration ${sim.configuration} has ${poles.length} unstable modes. ` +
+  if (poles.length) p(`This rig (${preset.name}) in the all-up configuration ${cfg} has ${poles.length} unstable modes. ` +
     `Each one doubles in size every ${times.join(", ")} (ln 2 / pole, fastest first), which is why it needs a fast, accurate controller.`);
-  else p(`Configuration ${sim.configuration} has zero unstable modes: the all-down chain is naturally stable, and the controller just damps its motion.`);
-  p("Configuration letters run from the bottom link to the top: U is up, D is down. Changing a target resets the rig near that equilibrium. " +
-    "Transitions between equilibria need a swing-up controller, which is not implemented.");
+  else p(`Configuration ${cfg} has zero unstable modes: the all-down chain is naturally stable, and the controller just damps its motion.`);
+  p("The simulation starts with every link hanging down at rest. Configuration letters run from the bottom link to the top: U is up, D is down. " +
+    "Choose a configuration to move there live. The cart first centres and settles, then follows offline-planned motions tracked by a time-varying LQR + Kalman filter. " +
+    "A route may use several motions through intermediate configurations. Reset returns the chain to hanging down.");
   p("Keys: <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> move the target, <kbd>1</kbd>-<kbd>4</kbd> push a link right " +
     "(<kbd>Shift</kbd> for left), <kbd>Space</kbd> toggles the controller, <kbd>R</kbd> resets, <kbd>P</kbd> pauses. " +
     "Clicking a link pushes it toward the side you clicked.");
@@ -91,6 +95,7 @@ function describe(preset: SimulationApi["preset"]): void {
 }
 
 function install(newSim: SimulationApi): void {
+  if (sim) sim.controllerEnabled = false; // cancel any pending design for the old preset
   sim = newSim;
   const n = sim.rig.links.length;
   hist = new History(n + 2);
@@ -106,14 +111,13 @@ function install(newSim: SimulationApi): void {
   syncButtons();
 }
 
-function selectConfiguration(configuration: string): void {
-  ++loadToken;
-  sim.setConfiguration(configuration);
-  hist.clear();
+async function selectConfiguration(configuration: string): Promise<void> {
+  const current = sim;
+  const request = current.requestConfiguration(configuration);
+  panel.updateTransition(current.status());
+  await request;
+  if (current !== sim) return;
   panel.syncConfiguration();
-  renderer.setSim(sim);
-  describe(sim.preset);
-  syncButtons();
   replaceHash(sim.preset.id);
 }
 
@@ -121,7 +125,7 @@ async function selectPreset(id: string, configuration?: string): Promise<void> {
   const token = ++loadToken;
   try {
     if (sim && sim.preset.id === id) {
-      selectConfiguration(resolveConfiguration(sim.preset, configuration));
+      await selectConfiguration(resolveConfiguration(sim.preset, configuration));
       loadError.hidden = true;
       return;
     }
@@ -129,10 +133,9 @@ async function selectPreset(id: string, configuration?: string): Promise<void> {
     if (token !== loadToken) return;
     loadError.hidden = true;
     const newSim = createSimulation(preset);
-    newSim.setConfiguration(resolveConfiguration(preset, configuration));
     install(newSim);
     panel.setActive(id);
-    replaceHash(id);
+    void selectConfiguration(resolveConfiguration(preset, configuration));
   } catch (err) {
     if (token !== loadToken) return;
     loadError.hidden = false;
@@ -142,12 +145,12 @@ async function selectPreset(id: string, configuration?: string): Promise<void> {
 }
 
 function replaceHash(id: string): void {
-  window.history.replaceState(null, "", `#${id}/${sim.configuration}`);
+  window.history.replaceState(null, "", `#${id}/${sim.status().target}`);
 }
 
 panel = new Panel({
   onPreset: (id) => { void selectPreset(id); },
-  onConfiguration: (cfg) => selectConfiguration(cfg),
+  onConfiguration: (cfg) => { void selectConfiguration(cfg); },
   onSpeed: (v) => { speed = v; },
   onTapForce: (f) => { tapForce = f; },
   onPush: push,
@@ -181,15 +184,15 @@ function frame(now: number): void {
     const n = sim.rig.links.length;
     hist.maybeSample(st.t, (out, o) => {
       for (let i = 0; i < n; i++) out[o + i] = st.thetaDeviation[i] ?? 0;
-      out[o + n] = st.x;
-      out[o + n + 1] = st.xRef;
+      out[o + n] = st.x - st.xRef;
+      out[o + n + 1] = 0;
     });
 
     renderer.draw(st, now);
     anglesPlot.draw(hist);
     xPlot.draw(hist);
     if (fallenOverlay.hidden !== !st.fallen) fallenOverlay.hidden = !st.fallen;
-    if (hudTick++ % 3 === 0) hud.update(st, perfText);
+    if (hudTick++ % 3 === 0) { hud.update(st, perfText); panel.updateTransition(st); }
   }
   requestAnimationFrame(frame);
 }
@@ -200,9 +203,8 @@ async function start(): Promise<void> {
   panel.setPresets(list, id);
   const preset = await loadPreset(id);
   const newSim = createSimulation(preset);
-  newSim.setConfiguration(resolveConfiguration(preset, configuration));
   install(newSim);
-  replaceHash(id);
+  void selectConfiguration(resolveConfiguration(preset, configuration));
 
   bindControls(canvas, renderer, {
     togglePause: () => { paused = !paused; syncButtons(); },
@@ -214,7 +216,7 @@ async function start(): Promise<void> {
   });
   window.addEventListener("hashchange", () => {
     const h = parseHash(location.hash, list);
-    if (h.presetId !== sim.preset.id || h.configuration !== sim.configuration) void selectPreset(h.presetId, h.configuration);
+    if (h.presetId !== sim.preset.id || h.configuration !== sim.status().target) void selectPreset(h.presetId, h.configuration);
   });
   new ResizeObserver(() => { renderer.resize(); anglesPlot.resize(); xPlot.resize(); }).observe($("stage-wrap"));
   renderer.resize(); anglesPlot.resize(); xPlot.resize();

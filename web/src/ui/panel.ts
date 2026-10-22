@@ -1,4 +1,4 @@
-import type { PresetSummary, RealityKnobs, SimulationApi } from "../sim/types";
+import type { PresetSummary, RealityKnobs, SimulationApi, SimStatus } from "../sim/types";
 import { $, el } from "./dom";
 import { linkColor } from "./colors";
 
@@ -43,6 +43,10 @@ export class Panel {
   private desc = $("preset-desc");
   private knobsBox = $("knobs");
   private pushRow = $("push-row");
+  private transitionText = $("transition-status");
+  private transitionRoute = $("transition-route");
+  private transitionProgress = $<HTMLProgressElement>("transition-progress");
+  private configurationPicker = $<HTMLSelectElement>("configuration-picker");
   private configurationBox = $("configuration-links");
   private inputs = new Map<keyof RealityKnobs, { input: HTMLInputElement; out: HTMLElement; spec: KnobSpec }>();
   private sim: SimulationApi | null = null;
@@ -51,6 +55,7 @@ export class Panel {
   speed = 1;
 
   constructor(private cb: PanelCallbacks) {
+    this.configurationPicker.addEventListener("change", () => cb.onConfiguration(this.configurationPicker.value));
     this.select.addEventListener("change", () => cb.onPreset(this.select.value));
 
     const speed = $<HTMLInputElement>("speed");
@@ -124,6 +129,9 @@ export class Panel {
   setSim(sim: SimulationApi): void {
     this.sim = sim;
     this.syncKnobs();
+    this.configurationPicker.replaceChildren(...Object.keys(sim.preset.configurations).map(cfg => {
+      const option = el('option', '', cfg); option.value = cfg; return option;
+    }));
     this.syncConfiguration();
     this.pushRow.replaceChildren();
     sim.rig.links.forEach((_, i) => {
@@ -152,7 +160,7 @@ export class Panel {
     const focused = Array.from(this.configurationBox.children).findIndex(button => button === document.activeElement);
     this.configurationBox.replaceChildren();
     sim.rig.links.forEach((_, i) => {
-      const down = sim.configuration[i] === 'D';
+      const down = sim.status().target[i] === 'D';
       const button = el('button', 'btn configuration-link', `${i + 1} ${down ? 'down' : 'up'}`);
       const dot = el('i', 'dot');
       dot.style.background = linkColor(i);
@@ -160,15 +168,43 @@ export class Panel {
       button.type = 'button';
       button.setAttribute('aria-label', `Link ${i + 1}: ${down ? 'down' : 'up'}. Set ${down ? 'up' : 'down'}`);
       button.setAttribute('aria-pressed', String(down));
-      button.title = 'Resets to the selected equilibrium. Swing-up transitions are not implemented.';
+      button.title = 'Move to this configuration along a planned route.';
       button.addEventListener('click', () => {
-        const cfg = sim.configuration.split('');
+        const cfg = sim.status().target.split('');
         cfg[i] = down ? 'U' : 'D';
         this.cb.onConfiguration(cfg.join(''));
       });
       this.configurationBox.append(button);
       if (i === focused) button.focus();
     });
+    this.updateTransition(sim.status());
+  }
+
+  updateTransition(st: SimStatus): void {
+    const busy = st.mode !== 'hold';
+    this.configurationPicker.value = st.target;
+    this.configurationPicker.disabled = busy || st.fallen || !st.controllerEnabled;
+    for (const child of this.configurationBox.children) (child as HTMLButtonElement).disabled = this.configurationPicker.disabled;
+    const progress = st.designProgress ?? st.transitionProgress;
+    this.transitionProgress.hidden = progress === null;
+    this.transitionProgress.value = progress ?? 0;
+    this.transitionProgress.setAttribute('aria-label', st.designProgress !== null ? 'Preparing motion' : 'Current motion progress');
+    this.transitionRoute.textContent = st.route.length > 1 ? `Route: ${st.route.join(' → ')}` : `Holding ${st.configuration}`;
+    this.transitionText.textContent = st.transitionError ?? (st.fallen ? 'Fallen. Reset to hanging down to try again.' :
+      !st.controllerEnabled ? 'Controller off. Reset to hanging down to start again.' :
+      st.designProgress !== null ? `Preparing motion · ${Math.round(st.designProgress * 100)}% · cart centring` :
+      st.mode === 'center' ? `Centring and settling for ${st.currentEdge}` :
+      st.mode === 'transition' ? `${st.currentEdge} · ${Math.round((st.transitionProgress ?? 0) * 100)}%` :
+      'Choose a configuration to move there live.');
+    // Only rebuild the per-link labels when the target changes or a handoff completes.
+    for (let i = 0; i < this.configurationBox.children.length; i++) {
+      const button = this.configurationBox.children[i] as HTMLButtonElement, down = st.target[i] === 'D';
+      const label = `${i + 1} ${down ? 'down' : 'up'}`;
+      if (button.lastChild?.textContent !== label) {
+        // Handlers read the current target; rebuilding once keeps their direction current.
+        this.syncConfiguration(); break;
+      }
+    }
   }
 
   /** Copy sim.knobs into the sliders. */

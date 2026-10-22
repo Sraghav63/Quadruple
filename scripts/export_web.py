@@ -17,6 +17,7 @@ with y = [cart_position - x_ref, wrap(cumsum(joint_angles) - theta_eq)].
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from quad_pendulum.params import (
 )
 from quad_pendulum.plant import Plant
 from quad_pendulum.presets import presets
+from quad_pendulum.transition import DATA_DIR, Trajectory, TransitionConfig, TransitionController
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESETS = ROOT / "web" / "public" / "presets"
@@ -62,6 +64,8 @@ def controller_json(ctl: LQRController) -> dict:
         "configuration": ctl.configuration,
         "thetaEq": ctl.theta_eq.tolist(),
         "nz": int(ctl.nz),
+        "nx": int(ctl.nx),
+        "delay": int(ctl.delay),
         "ny": int(1 + ctl.n),
         "dt": float(ctl.dt),
         "accelLimit": float(ctl.rig.drive.accel_limit),
@@ -138,6 +142,59 @@ def plant_golden(rig: RigParams, frictionless: bool, seconds: float = 1.0, confi
     return {"rig": rig_json(rig), "theta0": theta0.tolist(), "accelCommand": cmd, "states": rows}
 
 
+def export_transitions(pid: str) -> list[dict]:
+    """Snapshot completed files without modifying the library being generated."""
+    source = DATA_DIR / pid
+    target = PRESETS / pid / "transitions"
+    target.mkdir(parents=True, exist_ok=True)
+    index_path = source / "index.json"
+    if index_path.exists():
+        entries = json.loads(index_path.read_text())
+    else:
+        entries = []
+        for path in sorted(source.glob("*-*.json")):
+            # Generators publish completed trajectories atomically. If an older
+            # generator is still writing one, leave it for the next export.
+            try:
+                doc = json.loads(path.read_text())
+            except (json.JSONDecodeError, FileNotFoundError):
+                continue
+            entries.append({k: doc[k] for k in ("start", "goal", "duration")} | {"file": path.name})
+    for entry in entries:
+        shutil.copyfile(source / entry["file"], target / entry["file"])
+    (target / "index.json").write_text(json.dumps(entries, indent=2))
+    return entries
+
+
+def transition_golden(rig: RigParams) -> dict:
+    trajectory = Trajectory.load(DATA_DIR / "links2" / "DD-UU.json")
+    ctl = TransitionController(rig, trajectory)
+    deviation = np.array([0.017, -0.006, 0.025, 0.001, -0.0015, 0.004, -0.003])
+    in_flight = np.linspace(0.12, 0.18, ctl.delay)
+    offset = 0.017
+    ctl.begin(deviation, in_flight, offset)
+    checkpoints = sorted({0, 1, 37, ctl.steps // 2, ctl.steps - 1})
+    measurements, commands, states = [], [], {}
+    for k in range(ctl.steps):
+        nominal = ctl.nominal[:, k]
+        theta = nominal[3:3 + ctl.n] + 0.0002 * np.sin(0.13 * k + np.arange(ctl.n))
+        cart = nominal[0] + offset + 0.00002 * np.cos(0.17 * k)
+        joints = wrap_angle(absolute_to_relative(theta))
+        meas = Measurement(k * ctl.dt, cart, joints)
+        measurements.append({"cartPosition": float(cart), "jointAngles": joints.tolist()})
+        commands.append(ctl.step(meas))
+        if k in checkpoints:
+            states[str(k)] = ctl.z.tolist()
+    return {
+        "preset": "links2", "deviation": deviation.tolist(), "inFlight": in_flight.tolist(),
+        "xOffset": offset, "measurements": measurements, "u": commands, "z": states,
+        "gains": {str(k): ctl.gains[k].tolist() for k in checkpoints},
+        "nominal": {str(k): ctl.nominal[:, k].tolist() for k in checkpoints},
+        "az": {str(k): ctl.az[k].tolist() for k in checkpoints},
+        "bz": {str(k): ctl.bz[k].tolist() for k in checkpoints},
+    }
+
+
 def main() -> None:
     PRESETS.mkdir(parents=True, exist_ok=True)
     GOLDEN.mkdir(parents=True, exist_ok=True)
@@ -159,6 +216,8 @@ def main() -> None:
             "rig": rig_json(rig),
             "controller": default["controller"],
             "configurations": configurations,
+            "transitions": export_transitions(pid),
+            "transitionConfig": camel(asdict(TransitionConfig())),
         }
         (PRESETS / f"{pid}.json").write_text(json.dumps(doc, separators=(",", ":")))
         index.append({"id": pid, "name": name, "description": desc})
@@ -181,6 +240,8 @@ def main() -> None:
                 "nominal": plant_golden(rig, frictionless=False),
             }
             (GOLDEN / f"{pid}.plant.json").write_text(json.dumps(plant))
+        if pid == "links2":
+            (GOLDEN / "links2.transition.json").write_text(json.dumps(transition_golden(rig)))
         print(f"{pid:11s} configurations={len(configurations):2d} nz={default['controller']['nz']:2d}")
     (PRESETS / "index.json").write_text(json.dumps(index, indent=2))
     print(f"Wrote {len(index)} presets to {PRESETS.relative_to(ROOT)} and golden traces to {GOLDEN.relative_to(ROOT)}")

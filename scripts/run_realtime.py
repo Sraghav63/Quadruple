@@ -17,7 +17,7 @@ import numpy as np
 from quad_pendulum.params import all_configurations, parse_configuration, wrap_angle
 from quad_pendulum.presets import preset_rig
 from quad_pendulum.sim import Simulation
-from quad_pendulum.transition import DATA_DIR, TransitionLibrary, Trajectory
+from quad_pendulum.transition import DATA_DIR, Trajectory, TransitionLibrary
 
 PUSH_FORCE = 0.1  # N, horizontal tap at the top of a link (0.2 N already topples links 3-4)
 PUSH_DURATION = 0.02  # s
@@ -255,7 +255,6 @@ class Viewer:
     def advance(self, wall_dt: float) -> None:
         if self.paused or self.sim.fallen:
             return
-        was_transition = self.sim.mode == "transition"
         self.acc += min(wall_dt, MAX_CATCHUP) * self.args.speed
         n = int(self.acc / self.dt)
         self.acc -= n * self.dt
@@ -351,13 +350,29 @@ class Viewer:
         pg, scr, sim, rig = self.pg, self.screen, self.sim, self.rig
         r = self.scene_rect
         half = rig.cart.rail_half_length
-        # chain extent about the cart pivot at the target equilibrium (down links hang below)
-        reach = np.cumsum([link.length * (1.0 if c == "U" else -1.0)
-                           for link, c in zip(rig.links, sim.configuration)])
         pivot = float(sim.plant.link_points()[0][1])  # hinge height above the rail line
-        zmax, zmin = max(0.0, pivot + float(reach.max())), min(0.0, pivot + float(reach.min()))
         margin = 0.18
-        self.scale = min(r.width / (2 * (half + margin)), r.height / (zmax - zmin + 0.45))
+
+        def reach(configuration: str) -> np.ndarray:
+            return np.cumsum(
+                [link.length * (1.0 if c == "U" else -1.0)
+                 for link, c in zip(rig.links, configuration)]
+            )
+
+        # Chain extent about the hinge: the current and target equilibria while holding,
+        # the full circle of reach whenever a swing is under way or about to start.
+        swinging = sim.mode != "hold" or sim.configuration != sim.target
+        if swinging:
+            need = (self.max_lengths + 0.05, -self.max_lengths - 0.05)
+            width = max(half + margin, 0.5 + self.max_lengths + 0.1)
+        else:
+            both = np.r_[reach(sim.configuration), reach(sim.target)]
+            need = (float(both.max()), float(both.min()))
+            width = half + margin
+        want = np.array([width, max(0.0, pivot + need[0]), min(0.0, pivot + need[1])])
+        self.view = want if self.view is None else self.view + 0.12 * (want - self.view)
+        width, zmax, zmin = self.view
+        self.scale = min(r.width / (2 * width), r.height / (zmax - zmin + 0.45))
         self.origin = (r.centerx, r.top + int((zmax + 0.2) * self.scale))
         pts = sim.plant.link_points()
         st = sim.status()
@@ -396,6 +411,21 @@ class Viewer:
             pg.draw.circle(scr, FG, self.w2s(*p), 5)
             pg.draw.circle(scr, BG, self.w2s(*p), 2)
 
+        # planned nominal chain during a swing
+        if sim.mode == "transition" and sim.tracker is not None:
+            tr = sim.tracker
+            nom = tr.nominal[:, min(tr.k, tr.steps)]
+            ang = nom[3 : 3 + rig.n_links]
+            cxn, czn = nom[0] + tr.x_offset, pivot
+            ghost = [self.w2s(cxn, czn)]
+            for link, th in zip(rig.links, ang):
+                cxn += link.length * np.sin(th)
+                czn += link.length * np.cos(th)
+                ghost.append(self.w2s(cxn, czn))
+            pg.draw.lines(scr, FG, False, ghost, 1)
+            for g in ghost:
+                pg.draw.circle(scr, FG, g, 4, 1)
+
         # scale bar
         bar = int(0.1 * self.scale)
         bx, by = r.left + 20, r.bottom - 22
@@ -409,6 +439,9 @@ class Viewer:
             scr.blit(surf, surf.get_rect(center=(r.centerx, r.top + 40)))
         elif self.paused:
             surf = self.big.render("PAUSED", True, DIM)
+            scr.blit(surf, surf.get_rect(center=(r.centerx, r.top + 40)))
+        elif self.message and time.perf_counter() < self.message_until:
+            surf = self.font.render(self.message, True, TARGET)
             scr.blit(surf, surf.get_rect(center=(r.centerx, r.top + 40)))
 
     def bar(self, x, y, w, value, limit, label):
@@ -434,11 +467,31 @@ class Viewer:
             status, scol = "FALLEN", BAD
         elif st["hit_rail_end"]:
             status, scol = "RAIL END", (240, 150, 50)
+        elif st["mode"] == "transition":
+            status, scol = "SWINGING", TARGET
+        elif st["mode"] == "center":
+            status, scol = "CENTRING", TARGET
         else:
             status, scol = "BALANCING", OK
         self.text(f"status  {status}", (x, y), scol)
         y += lh
+        self.text(f"mode    {st['mode']}", (x, y))
+        y += lh
         self.text(f"config  {sim.configuration}  (bottom first)", (x, y), TARGET)
+        y += lh
+        goal_col = TARGET if st["target"] != sim.configuration else DIM
+        self.text(f"target  {st['target']}", (x, y), goal_col)
+        y += lh
+        edge = f"{sim.route[0][0]} > {sim.route[0][1]}" if sim.route else "-"
+        self.text(f"edge    {edge}", (x, y), DIM)
+        y += lh
+        progress = st["transition_progress"]
+        pg.draw.rect(self.screen, GRID, (x, y + 3, w, 8))
+        if progress is not None:
+            pg.draw.rect(self.screen, TARGET, (x, y + 3, int(w * progress), 8))
+        y += lh
+        sel_col = FG if self.pending != st["target"] or st["mode"] == "hold" else DIM
+        self.text(f"pick    {self.pending}  (Enter to go)", (x, y), sel_col)
         y += lh
         self.text(f"control {'ON' if on else 'OFF'}", (x, y), OK if on else BAD)
         y += lh + 4
@@ -460,7 +513,7 @@ class Viewer:
         y += 36
         self.bar(x, y, w, st["command"], rig.drive.accel_limit, f"accel cmd   {st['command']:+7.2f} (lim {rig.drive.accel_limit:.0f})")
         y += 40
-        self.text("link angle error from target (deg)", (x, y), DIM, self.small)
+        self.text("angle error vs target/nominal (deg)", (x, y), DIM, self.small)
         y += 16
         for i, th in enumerate(deviation_deg(sim, st["theta"])):
             pg.draw.rect(self.screen, LINK_COLORS[i % 4], (x, y + 4, 10, 10))
@@ -471,8 +524,10 @@ class Viewer:
             "<-/-> A/D  move target 5 cm",
             "mouse drag  set target",
             "1-4 push link right, +Shift left",
-            "Space ctrl on/off   R reset",
-            "C / Shift+C next/prev config (resets)",
+            "5-8 toggle link target U/D",
+            "C cycle target  U all up  H all down",
+            "Enter/G go to target (real-time swing)",
+            "Space ctrl on/off   R reset to all down",
             "P pause   Esc quit",
         ]
         for line in help_lines:
@@ -483,7 +538,7 @@ class Viewer:
     def draw_plots(self, r) -> None:
         pg = self.pg
         half_w = r.width // 2
-        self.plot(pg.Rect(r.left + 8, r.top + 6, half_w - 12, r.height - 12), "link angle error from target (deg)", "angles")
+        self.plot(pg.Rect(r.left + 8, r.top + 6, half_w - 12, r.height - 12), "link angle error from target/nominal (deg)", "angles")
         self.plot(pg.Rect(r.left + half_w + 4, r.top + 6, half_w - 12, r.height - 12), "cart x (m), target", "cart")
 
     def plot(self, r, title, kind) -> None:

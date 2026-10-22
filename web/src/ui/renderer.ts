@@ -59,14 +59,11 @@ export class Renderer {
 
   private layout(): void {
     const margin = 0.16;
-    let up = 0.07, down = 0.07;
-    this.sim.rig.links.forEach((link, i) => {
-      if (this.sim.configuration[i] === 'U') up += link.length;
-      else down -= link.length;
-    });
-    down = Math.min(-0.18, down);
+    // Every link can sweep a full circle during a planned motion. Include
+    // the whole rail plus chain radius horizontally, and both vertical halves.
+    const up = 0.07 + this.height, down = 0.07 - this.height;
     const available = this.h - 44 - 100;
-    const sx = this.w / (2 * (this.half + margin));
+    const sx = this.w / (2 * (this.half + this.height + margin));
     const sy = available / (up - down);
     this.scale = Math.max(1, Math.min(sx, sy));
     this.oy = 44 + (available - (up - down) * this.scale) / 2 + up * this.scale;
@@ -176,7 +173,7 @@ export class Renderer {
     const links = this.sim.rig.links;
     const n = links.length;
     const th = st.thetaEstimate;
-    let ex = st.x, ez = 0.07;
+    let ex = st.xEstimate, ez = 0.07;
     ctx.globalAlpha = 0.25;
     for (let i = 0; i < n; i++) {
       const a = th[i] ?? 0;

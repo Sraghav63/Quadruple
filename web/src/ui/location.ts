@@ -8,5 +8,5 @@ export function parseHash(hash: string, presets: PresetSummary[]): { presetId: s
 }
 
 export function resolveConfiguration(preset: Preset, configuration?: string): string {
-  return configuration && Object.hasOwn(preset.configurations, configuration) ? configuration : preset.controller.configuration;
+  return configuration && Object.hasOwn(preset.configurations, configuration) ? configuration : 'D'.repeat(preset.rig.links.length);
 }

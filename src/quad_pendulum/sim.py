@@ -22,13 +22,16 @@ from quad_pendulum.params import RigParams, equilibrium_angles, parse_configurat
 from quad_pendulum.plant import Plant
 from quad_pendulum.transition import TransitionConfig, TransitionController, TransitionLibrary
 
-# A transition starts once the cart is this close to the centre and the chain is
-# this still, held for SETTLE_TIME (estimated state, as the firmware would see it).
+# A transition starts once the cart is near the centre and the chain is within
+# its normal stiction wobble (estimated state, as the firmware would see it).
+# Balancing never comes fully to rest (joint stiction keeps a small limit cycle,
+# a few degrees and tenths of m/s), so the tracker is designed and validated to
+# start from that wobble rather than waiting for stillness.
 CENTER_TOL = 0.05  # m (the planned motion is shifted to start where the cart is)
-CENTER_SPEED_TOL = 0.03  # m/s
-SETTLE_ANGLE_TOL = np.deg2rad(2.0)  # rad
-SETTLE_RATE_TOL = 0.2  # rad/s
-SETTLE_TIME = 0.2  # s
+CENTER_SPEED_TOL = 0.6  # m/s
+SETTLE_ANGLE_TOL = np.deg2rad(6.0)  # rad
+SETTLE_RATE_TOL = 1.5  # rad/s
+SETTLE_TIME = 0.0  # s
 
 
 class Simulation:
@@ -120,9 +123,11 @@ class Simulation:
 
     def request_configuration(self, goal: str) -> bool:
         """Move to `goal` in real time along the stored transitions. Returns False
-        if there is no library or no route; ignored while a transition runs."""
+        if there is no library or no route, or while a transition runs or the
+        controller is off."""
         goal = parse_configuration(goal, self.rig.n_links)
-        if self.fallen or self.transitions is None or self.mode == "transition":
+        busy = self.mode == "transition" or not self.controller_enabled
+        if self.fallen or self.transitions is None or busy:
             return False
         route = self.transitions.route(self.configuration, goal)
         if route is None:
@@ -144,14 +149,22 @@ class Simulation:
             and np.abs(z[3 + n : 3 + 2 * n]).max() < SETTLE_RATE_TOL
         )
         self._settled = self._settled + 1 if still else 0
-        return self._settled >= round(SETTLE_TIME / self.rig.control_dt)
+        return self._settled >= max(1, round(SETTLE_TIME / self.rig.control_dt))
+
+    def _in_flight(self, cmd: float, count: int) -> list[float]:
+        """The `count` newest commands in flight after this period (the controller's
+        model of the queue, which can be shorter than the true plant's)."""
+        queue = list(self._pending)[1:] + [cmd]
+        return queue[len(queue) - count :] if count else []
 
     def step(self) -> None:
         meas = self.plant.measure()
         if not self.controller_enabled:
             cmd = 0.0
             self.controller.reset(meas)
+            # A request or swing in progress is abandoned; it balances where it is.
             self.mode, self.route, self.tracker = "hold", [], None
+            self.target = self.configuration
         elif self.mode == "transition":
             cmd = self.tracker.step(meas)
             if self.tracker.done:
@@ -159,7 +172,7 @@ class Simulation:
                 self.configuration = goal
                 self.theta_eq = equilibrium_angles(goal, self.rig.n_links)
                 self.controller = self._balancer(goal)
-                self.controller.seed(self.tracker.handoff(), list(self._pending)[1:] + [cmd])
+                self.controller.seed(self.tracker.handoff(), self._in_flight(cmd, self.controller.delay))
                 self.tracker = None
                 self.mode = "center" if self.route else "hold"
                 self._settled = 0
@@ -170,7 +183,7 @@ class Simulation:
                 start, goal = self.route[0]
                 self.tracker = self.transition_controller(start, goal)
                 z = self.controller.physical_estimate
-                self.tracker.begin(z, list(self._pending)[1:] + [cmd], x_offset=z[0])
+                self.tracker.begin(z, self._in_flight(cmd, self.tracker.delay), x_offset=z[0])
                 self.mode = "transition"
         self._pending.append(cmd)
         applied = self._pending.popleft()

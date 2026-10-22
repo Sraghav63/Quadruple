@@ -11,10 +11,10 @@ import socketserver
 import webbrowser
 from pathlib import Path
 
-from quad_pendulum.params import RigParams, parse_configuration
+from quad_pendulum.params import parse_configuration
 from quad_pendulum.presets import preset_rig
 from quad_pendulum.sim import Simulation
-from quad_pendulum.transition import DATA_DIR, TransitionLibrary
+from quad_pendulum.transition import DATA_DIR, Trajectory, TransitionLibrary
 
 ROOT = Path(__file__).resolve().parents[1]
 VIEWER_DIR = ROOT / "viewer3d"
@@ -75,6 +75,15 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def load_library(preset: str) -> TransitionLibrary:
+    directory = DATA_DIR / preset
+    if (directory / "index.json").exists():
+        return TransitionLibrary(directory)
+    # library still being planned: use whatever edge files exist
+    files = sorted(directory.glob("*-*.json")) if directory.is_dir() else []
+    return TransitionLibrary(trajectories=[Trajectory.load(f) for f in files])
+
+
 def generate_trajectory(
     seconds: float,
     seed: int,
@@ -83,7 +92,7 @@ def generate_trajectory(
     preset: str = "quad",
 ) -> dict:
     rig = preset_rig(preset)
-    library = TransitionLibrary(DATA_DIR / preset) if goto else None
+    library = load_library(preset) if goto else None
     sim = Simulation(rig, seed=seed, configuration=configuration, transitions=library)
     sim.reset(random_tilt_deg=0.05)
     script = [] if goto else sorted(SCRIPT, key=lambda item: item[0])

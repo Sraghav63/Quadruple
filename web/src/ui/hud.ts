@@ -57,6 +57,8 @@ export class Hud {
       setText(this.angleEls[i]!, `${((st.thetaDeviation[i] ?? 0) * RAD2DEG).toFixed(1)}°`);
     }
     let text = "balancing", cls = "pill ok";
+    if (st.mode === 'center') { text = st.designProgress !== null ? 'preparing motion' : 'centring'; cls = 'pill warn'; }
+    if (st.mode === 'transition') text = `moving · ${Math.round(100 * (st.transitionProgress ?? 0))}%`;
     if (st.fallen) { text = "fallen"; cls = "pill bad"; }
     else if (st.hitRailEnd) { text = "hit rail end"; cls = "pill warn"; }
     else if (!st.controllerEnabled) { text = "controller off"; cls = "pill warn"; }

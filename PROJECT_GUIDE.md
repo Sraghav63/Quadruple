@@ -17,6 +17,9 @@ python -m pytest
 ruff check .
 ```
 
+Planning transitions (not running them) also needs CasADi:
+`python -m pip install -e ".[plan]"`.
+
 Python 3.11 or 3.12 is required by the dependency pins. Run scripts as
 `python scripts/<name>.py` from the repository root.
 
@@ -45,7 +48,9 @@ changing the rig description changes everything consistently.
 | `controller.py` | `ControllerConfig` and `LQRController`: discretisation, delay augmentation, LQR and Kalman gains, the per-period `step`, and `to_c_header` export. |
 | `model.py` | Generates the MuJoCo XML from `RigParams`. |
 | `plant.py` | `Plant`: ground-truth MuJoCo mechanics, velocity-mode servo, taps, sensor model. |
-| `sim.py` | `Simulation`: the closed loop at the control rate. |
+| `sim.py` | `Simulation`: the closed loop at the control rate, plus the supervisor that moves between configurations in real time. |
+| `transition.py` | Planned transitions: `plan_transition` (collocation, CasADi), `Trajectory`, `TransitionController` (time-varying LQR + Kalman), `TransitionLibrary` (storage and routing). |
+| `presets.py` | Named rigs: `quad`, `links3`, `links2`, `links1`, `quad-short`. |
 
 ### Conventions
 
@@ -82,9 +87,102 @@ its target, or at the rail end.
   against 100% for the other 14.
 - `DDDD` has no unstable poles: it is open-loop stable, so the controller adds
   damping and cart positioning only.
-- Switching configuration needs a reset. Swing-up and transitions between
-  equilibria are not implemented; the start must be released near the target
-  pose.
+- Moving between configurations is a planned transition, see
+  [Transitions](#transitions-between-configurations). `Simulation.set_configuration`
+  jumps and resets instead (used by the viewer's R key and by tests).
+
+### Transitions between configurations
+
+The whole system is real time: the loop keeps running while the chain moves
+from whatever configuration it is in. The viewers (`run_realtime.py`, the
+website) start with every link hanging down at rest; `Simulation` starts in its
+`configuration` argument (all up by default, for API compatibility). Then
+`Simulation.request_configuration(goal)` swings it to `goal`.
+
+**Offline.** `plan_transition` solves a direct collocation problem with CasADi
+and IPOPT. The state holds cart position, velocity and acceleration plus link
+angles and rates; the input is the cart jerk, so the commanded acceleration
+`u = a + model_lag * jerk` matches the drive lag. Limits are constraints
+(`PlanLimits`): |x| <= 0.5 m (rail half-length is 0.6), 2.2 m/s, 25 m/s^2
+command (the drive allows 30), 120 N at the belt, and bounds on link rates and
+accelerations. Only the knots are stored (`Trajectory`, JSON).
+`scripts/plan_transitions.py` tries, cheapest first, the default limits and a
+gentler profile (|x| <= 0.45 m, 1.8 m/s, 18 m/s^2, 100 N, which leaves the
+feedback more of the drive), a ladder of durations, and as initial guesses the
+time-reversed opposite transition (`reversed_trajectory`; the chain is
+time-reversible apart from the joint damping, and IPOPT often cannot find a
+motion out of a top-heavy configuration from a random guess) and random guesses.
+Each candidate is run closed loop in MuJoCo with the run-time supervisor: three
+seeds, each balancing the start configuration for 6 s first so the swing starts
+from the stiction wobble, as it would on the rig. Only candidates that arrive
+in all three are kept; `--revalidate` re-checks the stored library.
+
+**Run time.** `TransitionController` samples the knots at the control rate
+(cubic Hermite), linearises the chain along the nominal with finite differences
+and designs, in about 0.1 s, a time-varying LQR (backward Riccati from the
+stationary solution at the goal) and a time-varying Kalman filter (forward
+Riccati, online). The state is the deviation from the nominal with the same
+delay augmentation as `LQRController`, and each period is
+`u = u_nom + clamp(-K_k z)`. `TransitionConfig` holds its tolerances. The
+nominal is shifted by the cart position at the start, so it does not depend on
+where the cart is within the planning margin. `Simulation` caches one tracker
+per edge.
+
+**Supervisor** (`Simulation.mode`):
+
+1. `hold`: the balancing `LQRController` of the current configuration, with
+   the user's reference `x_ref`.
+2. `center`: after `request_configuration`, the same controller with the cart
+   reference forced to 0. The swing starts once the cart is within 5 cm of the
+   centre and the estimated chain is within its normal wobble (cart under
+   0.6 m/s, links within 6 degrees and 1.5 rad/s of the equilibrium). Joint
+   stiction keeps every configuration in a small limit cycle (all-up wanders
+   about 3.6 degrees at the bottom link with the cart at up to 0.5 m/s), so
+   waiting for stillness would never end; the tracker starts from the wobble.
+3. `transition`: the tracker runs the planned edge. When it ends, the balancing
+   controller of the new configuration is seeded with the tracker's estimate
+   and in-flight commands, and the mode goes back to `center` for the next edge
+   or `hold`.
+
+**Routing.** The library is sparse by design: swing-ups from all down to every
+configuration, swing-downs from every configuration to all down, and every
+single-link flip. `TransitionLibrary.route` runs Dijkstra on edge duration, so
+any pair connects, for example by swinging down and up again. It returns the
+list of `(start, goal)` edges; `None` means no route (for example, a library
+that is incomplete). `request_configuration` returns False if there is no
+route, the sim has fallen, or a transition is already running.
+
+**Fallen** during a transition: any link more than 0.6 rad from the nominal
+angles at that step, or the rail end. `status()` gains `mode`, `target` and
+`transition_progress`.
+
+Library (default rig `quad`): 83 planned transitions; every pair of the 16
+configurations is reachable, in 1.7 hops and 4.9 s on average (at most 3 hops,
+8.5 s). `links3` has 32 (all pairs), `quad-short` 82 (all pairs), `links2` 10,
+`links1` 2. Of the 204 three- and four-link edges tried, 197 passed validation;
+the 7 that did not all leave a top-heavy configuration (for example
+`UDUU` -> `UUUU`) and are routed around.
+
+How reliable they are (`check_robustness.py --all-transitions --trials 8`, each
+trial balancing 6 s first, then holding 3 s at the goal):
+
+- With the controller's model equal to the plant (`--nominal`, what the
+  simulator shows by default): 655/664 trials arrived (98.6%); 78 of the 83
+  quad edges in every trial, the weakest `UUUU` -> `UUDU` at 5/8.
+- With the full model mismatch of the balancing Monte Carlo (lengths +/-2%,
+  masses +/-10%, friction x0.5-2, drive bandwidth +/-40%, sometimes an extra
+  period of delay): 219/664 (33%). Link mass and length errors dominate; even
+  masses within +/-1% and lengths within +/-0.2% leave `DDDD` -> `UUUU` at about
+  half. Retuning the tracker's weights did not change this. Fast four-link swings
+  are sensitive to the model, so a real build needs carefully identified masses,
+  centres of mass and lengths (or online re-planning, not implemented). The
+  website's "reality" knobs show this directly.
+
+To regenerate: `python scripts/plan_transitions.py` (all presets; `--preset`,
+`--pairs START-GOAL,...`, `--workers`, `--force`; it is resumable and writes
+`index.json` last). Libraries live in `data/transitions/<preset>/`, one JSON
+file per edge. The viewer and robustness script fall back with a message when
+a preset has no library.
 
 ### Plant
 
@@ -178,9 +276,10 @@ joint flex, motor thermal limits, and discrete-time effects inside the servo.
   trade-off is made.
 - **Taps.** A quadruple pendulum tolerates only light taps: about 0.1 N for 20 ms
   on the top link with a 30 m/s^2 cart.
-- **Starting.** The controller only works near its target equilibrium. Start by
-  releasing the chain from a jig essentially perfectly at that pose (upright for
-  `UUUU`). Swing-up is not implemented.
+- **Starting.** Each balancing controller only works near its equilibrium. The
+  sim starts with every link hanging down at rest and swings to the requested
+  configuration with a planned transition. On hardware that start is the
+  natural one: the rig at rest, no jig needed.
 - **Robustness.** `check_robustness.py` draws random +/-2% lengths, +/-10%
   masses, friction x0.5-2, drive bandwidth +/-40%, occasional extra delay,
   random light taps and a reference step. Survival is about 95% or better.
@@ -192,7 +291,11 @@ joint flex, motor thermal limits, and discrete-time effects inside the servo.
 ```bash
 python scripts/run_realtime.py                 # interactive viewer
 python scripts/run_realtime.py --headless 10   # no window, prints a summary
-python scripts/run_realtime.py --config UUUD   # top link hanging down
+python scripts/run_realtime.py --goto UUUD     # swing from all down to UUUD
+python scripts/run_realtime.py --preset links2 --goto UU --headless 8
+python scripts/plan_transitions.py --preset quad    # (re)generate the library
+python scripts/check_robustness.py --transition DDDD-UUUU --trials 30
+python scripts/check_robustness.py --all-transitions --trials 20 --workers 8
 python scripts/check_robustness.py --trials 100 --workers 4
 python scripts/check_robustness.py --nominal   # only taps, no mismatch
 python scripts/check_robustness.py --all-configs --trials 20 --workers 8
@@ -202,14 +305,23 @@ python scripts/export_firmware.py --config UUUU
 ```
 
 - `run_realtime.py`: pygame viewer. Controls are in `README.md`. Options:
-  `--speed`, `--seed`, `--tilt-deg`, `--config`, `--no-controller`,
-  `--headless SECONDS`. C / Shift+C cycles through the 16 configurations
-  (rebuilds the sim and resets). Shows the rig, the configuration, link angle
-  errors from the target and rolling plots; down links hang below the rail.
+  `--speed`, `--seed`, `--tilt-deg`, `--config` (start, default all down),
+  `--goto CFG`, `--preset`, `--no-controller`, `--headless SECONDS`. Keys 5-8
+  toggle each link's target U/D, C / Shift+C cycles targets, Enter goes (a live
+  swing; R resets to all down). Shows mode, target, current edge and progress,
+  the planned nominal chain faintly during a swing, link angle errors from the
+  target (or the nominal while swinging) and rolling plots; the view zooms out to
+  fit the chain at any angle. With `--headless` and `--goto` it reports arrival,
+  time taken and the worst deviation from the nominal.
 - `check_robustness.py`: seeded trials with random mismatch. `--trials`,
   `--seconds`, `--workers`, `--seed`, `--min-success` (exit threshold),
-  `--nominal`, `--push-scale`, `--config CFG` (default all up), `--all-configs`
-  (runs every configuration and prints a survival table), and per-effect multipliers `--length-scale`,
+  `--nominal`, `--push-scale`, `--preset`, `--config CFG` (default all up),
+  `--all-configs` (runs every configuration and prints a survival table),
+  `--transition START-GOAL` (repeatable) and `--all-transitions`: start in START,
+  request GOAL, and succeed if it arrives in hold at GOAL and keeps balancing for
+  3 s more; prints per edge the success rate, median arrival time and worst
+  deviation from the nominal swing. Taps are off in transition runs unless
+  `--push-scale` is given; trials default to 40 s. Per-effect multipliers `--length-scale`,
   `--mass-scale`, `--cart-mass-scale`, `--friction-scale`, `--viscous-scale`,
   `--bandwidth-scale`, `--delay-scale` that widen or narrow each uncertainty
   (for delay, the extra-step probability divided by 0.2).
@@ -219,6 +331,11 @@ python scripts/export_firmware.py --config UUUU
 - `show3d.py`: runs a scripted headless simulation (reference moves and taps),
   writes `viewer3d/trajectory.json` and serves `viewer3d/` on localhost
   (`--seconds`, `--seed`, `--config`, `--port`, `--no-open`, `--export-only`).
+  `--goto CFG` instead requests that configuration at 0.5 s from `--config`
+  (default all down) so the viewer plays the swing; the camera frames the whole
+  motion. `--preset` picks the rig.
+- `plan_transitions.py`: plans and validates the transition library (see
+  Transitions above; needs the `plan` extra).
 - `export_firmware.py`: writes the controller gains, parameters and limits for
   the Teensy sketch (`--output`, `--config`; the header gets `QP_CONFIGURATION`
   and `QP_THETA_EQ`). See `firmware/README.md`.
@@ -298,6 +415,7 @@ python -m pytest
   modes, LQR and observer are stable, a one-link case, accel limit, header export.
 - `test_closed_loop.py`: five seconds upright, light taps on every link, a 20 cm
   reference step, and falling with the controller disabled.
+- `test_transition.py`: the transition planner, tracker, library routing and supervisor.
 
 The Teensy firmware is not built or run by any Python test.
 
@@ -305,10 +423,10 @@ The Teensy firmware is not built or run by any Python test.
 
 - Joint friction identification and compensation, since stiction is the dominant
   failure mode.
-- Swing-up and transitions between configurations (needed to move from one
-  equilibrium to another without resetting).
-- Swing-up via trajectory optimisation plus time-varying LQR, to remove the
-  need for a jig.
+- Transitions on the firmware: it needs the trajectory knots and the
+  time-varying design, or precomputed gains, in flash.
+- Replanning online or recovering a failed swing (a failed transition is
+  currently a fall).
 - Optional RL layered on top of the model-based controller (for example residual
   or recovery policies), not replacing it.
 - MPC with explicit input and rail constraints.

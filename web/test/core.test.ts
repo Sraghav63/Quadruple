@@ -117,8 +117,9 @@ describe('equilibrium configurations', () => {
     });
     for (const cfg of Object.keys(preset.configurations)) it(`${preset.id}/${cfg} survives a 20 cm step and 0.08 N tap from equilibrium`, () => {
       const sim = createSimulation(preset, 0);
+      // Keep the pre-transition fixture's three sensor initialisation reads.
       sim.setConfiguration(cfg);
-      sim.reset();
+      sim.setConfiguration(cfg);
       run(sim, 1000); sim.setReference(0.2);
       run(sim, 2000); sim.push(preset.rig.links.length - 1, 0.08, 0.02);
       run(sim, 3000);
@@ -127,7 +128,7 @@ describe('equilibrium configurations', () => {
       expect(sim.status().thetaDeviation.every(v => Math.abs(v) < 0.6)).toBe(true);
     });
   }
-  it('resets around the selected equilibrium and reports absolute ghost angles', () => {
+  it('jumps explicitly for fixtures, resets to hanging down and reports absolute ghost angles', () => {
     const sim = createSimulation(quad);
     sim.setKnobs({ sensorNoiseScale: 0 });
     sim.setConfiguration(' uuud ');
@@ -164,19 +165,19 @@ describe('equilibrium configurations', () => {
 describe('closed loop', () => {
   it('survives ten seconds from 0.05 degree tilt', () => {
     const sim = createSimulation(quad, 0);
-    sim.reset({ theta: Array(4).fill(0.05 * Math.PI / 180) });
+    sim.setConfiguration('UUUU', { theta: Array(4).fill(0.05 * Math.PI / 180) });
     run(sim, 10000);
     expect(sim.status().fallen).toBe(false);
   });
   it('recovers from a 0.08 N, 20 ms top tap', () => {
     const sim = createSimulation(quad, 0);
-    sim.reset({ randomTiltDeg: 0.05 }); run(sim, 2000);
+    sim.setConfiguration('UUUU', { randomTiltDeg: 0.05 }); run(sim, 2000);
     sim.push(3, 0.08, 0.02); run(sim, 10000);
     expect(sim.status().fallen).toBe(false);
   });
   it('falls when disarmed and continues finite physics with zero commands', () => {
     const sim = createSimulation(quad);
-    sim.reset({ theta: [0.01, 0.01, 0.01, 0.01] }); sim.controllerEnabled = false;
+    sim.setConfiguration('UUUU', { theta: [0.01, 0.01, 0.01, 0.01] }); sim.controllerEnabled = false;
     run(sim, 10000);
     expect(sim.status().fallen).toBe(true);
     expect(sim.status().command).toBe(0);
@@ -189,7 +190,7 @@ describe('closed loop', () => {
   });
   it('tracks a 0.2 m reference', () => {
     const sim = createSimulation(quad, 0);
-    sim.reset({ randomTiltDeg: 0.05 }); run(sim, 1000); sim.setReference(0.2);
+    sim.setConfiguration('UUUU', { randomTiltDeg: 0.05 }); run(sim, 1000); sim.setReference(0.2);
     run(sim, 7000);
     let mean = 0;
     for (let i = 0; i < 3000; i++) { sim.step(); mean += sim.status().x / 3000; }

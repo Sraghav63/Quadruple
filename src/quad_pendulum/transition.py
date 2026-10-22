@@ -24,14 +24,16 @@ The nominal command issued at step k is the one that acts at k + delay.
 
 from __future__ import annotations
 
+import heapq
 import json
 from dataclasses import asdict, dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
 from scipy.linalg import expm
 
-from quad_pendulum.linear import angular_acceleration, joint_damping_matrix, mass_terms
+from quad_pendulum.linear import joint_damping_matrix, mass_terms
 from quad_pendulum.params import (
     Measurement,
     RigParams,
@@ -40,7 +42,6 @@ from quad_pendulum.params import (
     relative_to_absolute,
     wrap_angle,
 )
-
 
 # The planned library: data/transitions/<preset id>/ (see scripts/plan_transitions.py).
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "transitions"
@@ -81,7 +82,7 @@ class Trajectory:
 
     def to_json(self) -> dict:
         def r(v):
-            return np.round(np.asarray(v, dtype=float), 9).tolist()
+            return np.round(np.asarray(v, dtype=float), 6).tolist()
 
         return {
             "start": self.start,
@@ -154,6 +155,31 @@ class Trajectory:
 
 
 # ------------------------------------------------------------------ planning
+def reversed_trajectory(traj: Trajectory) -> Trajectory:
+    """The same motion played backwards (goal -> start).
+
+    Apart from the small joint damping the chain's dynamics are time-reversible,
+    so this is a near-feasible motion and an excellent initial guess for the
+    opposite transition, which IPOPT often cannot find from a random guess."""
+    theta = traj.theta[:, ::-1].copy()
+    eq = equilibrium_angles(traj.goal, traj.n_links)[:, None]
+    theta -= 2 * np.pi * np.round((theta[:, :1] - eq) / (2 * np.pi))  # start at 0 or pi exactly
+    return Trajectory(
+        start=traj.goal,
+        goal=traj.start,
+        duration=traj.duration,
+        x=traj.x[::-1].copy(),
+        v=-traj.v[::-1],
+        a=traj.a[::-1].copy(),
+        jerk=-traj.jerk[::-1],
+        theta=theta,
+        omega=-traj.omega[:, ::-1],
+        alpha=traj.alpha[:, ::-1].copy(),
+        cost=traj.cost,
+        limits=traj.limits,
+    )
+
+
 def plan_transition(
     rig: RigParams,
     start: str,
@@ -165,9 +191,12 @@ def plan_transition(
     seed: int = 0,
     limits: PlanLimits | None = None,
     max_iter: int = 3000,
+    initial: Trajectory | None = None,
 ) -> Trajectory | None:
     """Direct collocation (trapezoidal) from rest at `start` to rest at `goal`, cart
-    centred at both ends. Solves on a coarse grid from a random guess, then refines.
+    centred at both ends. Solves on a coarse grid from a random guess, then refines;
+    with `initial` (e.g. `reversed_trajectory` of the opposite transition) it
+    solves the fine grid directly from that guess, stretched to `duration`.
     Returns None if IPOPT does not converge. Needs `casadi` (pip install casadi)."""
     import casadi as ca
 
@@ -240,6 +269,28 @@ def plan_transition(
         except RuntimeError:
             return False, ()
         return True, (sol.value(xs), np.atleast_1d(sol.value(jerk)), np.atleast_2d(sol.value(alpha)), float(sol.value(cost)))
+
+    if initial is not None:
+        fine_t = np.linspace(0.0, 1.0, knots)
+        init_t = np.linspace(0.0, 1.0, initial.x.size)
+        scale = initial.duration / duration  # rates scale when the motion is stretched
+
+        def stretch(m, power):
+            return np.array([np.interp(fine_t, init_t, row) for row in np.atleast_2d(m)]) * scale**power
+
+        gx = np.vstack([
+            stretch(initial.x, 0), stretch(initial.v, 1), stretch(initial.a, 2),
+            stretch(initial.theta, 0), stretch(initial.omega, 1),
+        ])
+        ok, fine = solve(knots, (gx, stretch(initial.jerk, 3), stretch(initial.alpha, 2)))
+        if not ok:
+            return None
+        xs, jerk, alpha, cost = fine
+        return Trajectory(
+            start=start, goal=goal, duration=float(duration), x=xs[0], v=xs[1], a=xs[2],
+            jerk=np.ravel(jerk), theta=xs[3 : 3 + n], omega=xs[3 + n :], alpha=alpha,
+            cost=cost, limits=lim,
+        )
 
     # Random guess: each flipping link turns half a revolution either way while
     # the cart sways; IPOPT finds the real motion from there.
@@ -531,7 +582,6 @@ class TransitionLibrary:
         best = {start: 0.0}
         prev: dict[str, str] = {}
         frontier = [(0.0, start)]
-        import heapq
 
         while frontier:
             cost, node = heapq.heappop(frontier)
@@ -550,4 +600,4 @@ class TransitionLibrary:
         while path[-1] != start:
             path.append(prev[path[-1]])
         path.reverse()
-        return list(zip(path[:-1], path[1:]))
+        return list(pairwise(path))

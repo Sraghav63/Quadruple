@@ -63,9 +63,9 @@
           </figure>
           <figure class="plot">
             <figcaption>
-              <span class="label">cart position · m:</span>
+              <span class="label">cart target error · m:</span>
               <span class="legend">
-                <span class="key"><i class="line cart"></i>x</span>
+                <span class="key"><i class="line cart"></i>x − target</span>
                 <span class="key"><i class="line dash"></i>target</span>
               </span>
             </figcaption>
@@ -82,9 +82,13 @@
           </label>
           <p id="preset-desc" class="note"></p>
           <div class="configuration">
-            <div class="row"><span>configuration</span><b id="h-configuration">UUUU</b></div>
+            <div class="row"><label for="configuration-picker">go to configuration</label><b id="h-configuration">DDDD</b></div>
+            <select id="configuration-picker" aria-label="Go to configuration"></select>
             <div id="configuration-links" class="configuration-links" role="group" aria-label="Link targets, bottom to top"></div>
-            <p class="note">Bottom to top · U = up, D = down. Changing a link resets the rig. Swing-up transitions are not implemented.</p>
+            <p class="note">Starts hanging down. Bottom to top · U = up, D = down.</p>
+            <p id="transition-route" class="note"></p>
+            <p id="transition-status" class="note" role="status" aria-live="polite"></p>
+            <progress id="transition-progress" max="1" value="0" hidden></progress>
           </div>
         </section>
 

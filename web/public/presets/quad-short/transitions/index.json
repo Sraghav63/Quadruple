@@ -1,0 +1,494 @@
+[
+  {
+    "start": "DDDD",
+    "goal": "DDDU",
+    "duration": 2.0,
+    "file": "DDDD-DDDU.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "DDUD",
+    "duration": 2.0,
+    "file": "DDDD-DDUD.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "DDUU",
+    "duration": 2.5,
+    "file": "DDDD-DDUU.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "DUDD",
+    "duration": 3.0,
+    "file": "DDDD-DUDD.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "DUDU",
+    "duration": 2.5,
+    "file": "DDDD-DUDU.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "DUUD",
+    "duration": 2.5,
+    "file": "DDDD-DUUD.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "DUUU",
+    "duration": 3.0,
+    "file": "DDDD-DUUU.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UDDD",
+    "duration": 3.0,
+    "file": "DDDD-UDDD.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UDDU",
+    "duration": 2.5,
+    "file": "DDDD-UDDU.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UDUD",
+    "duration": 2.5,
+    "file": "DDDD-UDUD.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UDUU",
+    "duration": 3.0,
+    "file": "DDDD-UDUU.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UUDD",
+    "duration": 2.5,
+    "file": "DDDD-UUDD.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UUDU",
+    "duration": 3.0,
+    "file": "DDDD-UUDU.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UUUD",
+    "duration": 4.0,
+    "file": "DDDD-UUUD.json"
+  },
+  {
+    "start": "DDDD",
+    "goal": "UUUU",
+    "duration": 3.5,
+    "file": "DDDD-UUUU.json"
+  },
+  {
+    "start": "DDDU",
+    "goal": "DDDD",
+    "duration": 2.0,
+    "file": "DDDU-DDDD.json"
+  },
+  {
+    "start": "DDDU",
+    "goal": "DDUU",
+    "duration": 2.0,
+    "file": "DDDU-DDUU.json"
+  },
+  {
+    "start": "DDDU",
+    "goal": "DUDU",
+    "duration": 2.0,
+    "file": "DDDU-DUDU.json"
+  },
+  {
+    "start": "DDDU",
+    "goal": "UDDU",
+    "duration": 3.0,
+    "file": "DDDU-UDDU.json"
+  },
+  {
+    "start": "DDUD",
+    "goal": "DDDD",
+    "duration": 2.0,
+    "file": "DDUD-DDDD.json"
+  },
+  {
+    "start": "DDUD",
+    "goal": "DDUU",
+    "duration": 2.0,
+    "file": "DDUD-DDUU.json"
+  },
+  {
+    "start": "DDUD",
+    "goal": "DUUD",
+    "duration": 2.0,
+    "file": "DDUD-DUUD.json"
+  },
+  {
+    "start": "DDUD",
+    "goal": "UDUD",
+    "duration": 2.0,
+    "file": "DDUD-UDUD.json"
+  },
+  {
+    "start": "DDUU",
+    "goal": "DDDD",
+    "duration": 2.5,
+    "file": "DDUU-DDDD.json"
+  },
+  {
+    "start": "DDUU",
+    "goal": "DDDU",
+    "duration": 2.0,
+    "file": "DDUU-DDDU.json"
+  },
+  {
+    "start": "DDUU",
+    "goal": "DDUD",
+    "duration": 2.0,
+    "file": "DDUU-DDUD.json"
+  },
+  {
+    "start": "DDUU",
+    "goal": "UDUU",
+    "duration": 2.0,
+    "file": "DDUU-UDUU.json"
+  },
+  {
+    "start": "DUDD",
+    "goal": "DDDD",
+    "duration": 3.0,
+    "file": "DUDD-DDDD.json"
+  },
+  {
+    "start": "DUDD",
+    "goal": "DUDU",
+    "duration": 2.0,
+    "file": "DUDD-DUDU.json"
+  },
+  {
+    "start": "DUDD",
+    "goal": "DUUD",
+    "duration": 3.0,
+    "file": "DUDD-DUUD.json"
+  },
+  {
+    "start": "DUDD",
+    "goal": "UUDD",
+    "duration": 3.0,
+    "file": "DUDD-UUDD.json"
+  },
+  {
+    "start": "DUDU",
+    "goal": "DDDD",
+    "duration": 2.5,
+    "file": "DUDU-DDDD.json"
+  },
+  {
+    "start": "DUDU",
+    "goal": "DDDU",
+    "duration": 2.0,
+    "file": "DUDU-DDDU.json"
+  },
+  {
+    "start": "DUDU",
+    "goal": "DUDD",
+    "duration": 2.0,
+    "file": "DUDU-DUDD.json"
+  },
+  {
+    "start": "DUDU",
+    "goal": "DUUU",
+    "duration": 2.0,
+    "file": "DUDU-DUUU.json"
+  },
+  {
+    "start": "DUDU",
+    "goal": "UUDU",
+    "duration": 2.0,
+    "file": "DUDU-UUDU.json"
+  },
+  {
+    "start": "DUUD",
+    "goal": "DDDD",
+    "duration": 3.5,
+    "file": "DUUD-DDDD.json"
+  },
+  {
+    "start": "DUUD",
+    "goal": "DDUD",
+    "duration": 2.0,
+    "file": "DUUD-DDUD.json"
+  },
+  {
+    "start": "DUUD",
+    "goal": "DUDD",
+    "duration": 2.0,
+    "file": "DUUD-DUDD.json"
+  },
+  {
+    "start": "DUUD",
+    "goal": "DUUU",
+    "duration": 2.0,
+    "file": "DUUD-DUUU.json"
+  },
+  {
+    "start": "DUUD",
+    "goal": "UUUD",
+    "duration": 2.0,
+    "file": "DUUD-UUUD.json"
+  },
+  {
+    "start": "DUUU",
+    "goal": "DDDD",
+    "duration": 3.0,
+    "file": "DUUU-DDDD.json"
+  },
+  {
+    "start": "DUUU",
+    "goal": "DDUU",
+    "duration": 2.0,
+    "file": "DUUU-DDUU.json"
+  },
+  {
+    "start": "DUUU",
+    "goal": "DUDU",
+    "duration": 2.0,
+    "file": "DUUU-DUDU.json"
+  },
+  {
+    "start": "DUUU",
+    "goal": "DUUD",
+    "duration": 2.0,
+    "file": "DUUU-DUUD.json"
+  },
+  {
+    "start": "DUUU",
+    "goal": "UUUU",
+    "duration": 3.0,
+    "file": "DUUU-UUUU.json"
+  },
+  {
+    "start": "UDDD",
+    "goal": "DDDD",
+    "duration": 3.0,
+    "file": "UDDD-DDDD.json"
+  },
+  {
+    "start": "UDDD",
+    "goal": "UDDU",
+    "duration": 2.0,
+    "file": "UDDD-UDDU.json"
+  },
+  {
+    "start": "UDDD",
+    "goal": "UDUD",
+    "duration": 3.0,
+    "file": "UDDD-UDUD.json"
+  },
+  {
+    "start": "UDDD",
+    "goal": "UUDD",
+    "duration": 4.0,
+    "file": "UDDD-UUDD.json"
+  },
+  {
+    "start": "UDDU",
+    "goal": "DDDD",
+    "duration": 2.5,
+    "file": "UDDU-DDDD.json"
+  },
+  {
+    "start": "UDDU",
+    "goal": "DDDU",
+    "duration": 3.0,
+    "file": "UDDU-DDDU.json"
+  },
+  {
+    "start": "UDDU",
+    "goal": "UDDD",
+    "duration": 2.0,
+    "file": "UDDU-UDDD.json"
+  },
+  {
+    "start": "UDDU",
+    "goal": "UDUU",
+    "duration": 2.0,
+    "file": "UDDU-UDUU.json"
+  },
+  {
+    "start": "UDDU",
+    "goal": "UUDU",
+    "duration": 4.0,
+    "file": "UDDU-UUDU.json"
+  },
+  {
+    "start": "UDUD",
+    "goal": "DDDD",
+    "duration": 2.5,
+    "file": "UDUD-DDDD.json"
+  },
+  {
+    "start": "UDUD",
+    "goal": "DDUD",
+    "duration": 2.0,
+    "file": "UDUD-DDUD.json"
+  },
+  {
+    "start": "UDUD",
+    "goal": "UDDD",
+    "duration": 3.0,
+    "file": "UDUD-UDDD.json"
+  },
+  {
+    "start": "UDUD",
+    "goal": "UDUU",
+    "duration": 2.0,
+    "file": "UDUD-UDUU.json"
+  },
+  {
+    "start": "UDUD",
+    "goal": "UUUD",
+    "duration": 3.0,
+    "file": "UDUD-UUUD.json"
+  },
+  {
+    "start": "UDUU",
+    "goal": "DDDD",
+    "duration": 3.0,
+    "file": "UDUU-DDDD.json"
+  },
+  {
+    "start": "UDUU",
+    "goal": "DDUU",
+    "duration": 2.0,
+    "file": "UDUU-DDUU.json"
+  },
+  {
+    "start": "UDUU",
+    "goal": "UDDU",
+    "duration": 2.0,
+    "file": "UDUU-UDDU.json"
+  },
+  {
+    "start": "UDUU",
+    "goal": "UDUD",
+    "duration": 2.0,
+    "file": "UDUU-UDUD.json"
+  },
+  {
+    "start": "UUDD",
+    "goal": "DDDD",
+    "duration": 2.5,
+    "file": "UUDD-DDDD.json"
+  },
+  {
+    "start": "UUDD",
+    "goal": "DUDD",
+    "duration": 3.0,
+    "file": "UUDD-DUDD.json"
+  },
+  {
+    "start": "UUDD",
+    "goal": "UDDD",
+    "duration": 4.0,
+    "file": "UUDD-UDDD.json"
+  },
+  {
+    "start": "UUDD",
+    "goal": "UUDU",
+    "duration": 3.0,
+    "file": "UUDD-UUDU.json"
+  },
+  {
+    "start": "UUDD",
+    "goal": "UUUD",
+    "duration": 4.0,
+    "file": "UUDD-UUUD.json"
+  },
+  {
+    "start": "UUDU",
+    "goal": "DDDD",
+    "duration": 3.0,
+    "file": "UUDU-DDDD.json"
+  },
+  {
+    "start": "UUDU",
+    "goal": "DUDU",
+    "duration": 2.0,
+    "file": "UUDU-DUDU.json"
+  },
+  {
+    "start": "UUDU",
+    "goal": "UDDU",
+    "duration": 3.0,
+    "file": "UUDU-UDDU.json"
+  },
+  {
+    "start": "UUDU",
+    "goal": "UUDD",
+    "duration": 2.0,
+    "file": "UUDU-UUDD.json"
+  },
+  {
+    "start": "UUDU",
+    "goal": "UUUU",
+    "duration": 3.0,
+    "file": "UUDU-UUUU.json"
+  },
+  {
+    "start": "UUUD",
+    "goal": "DDDD",
+    "duration": 4.0,
+    "file": "UUUD-DDDD.json"
+  },
+  {
+    "start": "UUUD",
+    "goal": "DUUD",
+    "duration": 2.0,
+    "file": "UUUD-DUUD.json"
+  },
+  {
+    "start": "UUUD",
+    "goal": "UDUD",
+    "duration": 3.0,
+    "file": "UUUD-UDUD.json"
+  },
+  {
+    "start": "UUUD",
+    "goal": "UUDD",
+    "duration": 4.0,
+    "file": "UUUD-UUDD.json"
+  },
+  {
+    "start": "UUUD",
+    "goal": "UUUU",
+    "duration": 4.0,
+    "file": "UUUD-UUUU.json"
+  },
+  {
+    "start": "UUUU",
+    "goal": "DDDD",
+    "duration": 3.5,
+    "file": "UUUU-DDDD.json"
+  },
+  {
+    "start": "UUUU",
+    "goal": "UUDU",
+    "duration": 4.0,
+    "file": "UUUU-UUDU.json"
+  },
+  {
+    "start": "UUUU",
+    "goal": "UUUD",
+    "duration": 4.0,
+    "file": "UUUU-UUUD.json"
+  }
+]

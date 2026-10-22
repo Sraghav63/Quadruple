@@ -1,0 +1,194 @@
+[
+  {
+    "start": "DDD",
+    "goal": "DDU",
+    "duration": 2.0,
+    "file": "DDD-DDU.json"
+  },
+  {
+    "start": "DDD",
+    "goal": "DUD",
+    "duration": 2.0,
+    "file": "DDD-DUD.json"
+  },
+  {
+    "start": "DDD",
+    "goal": "DUU",
+    "duration": 2.5,
+    "file": "DDD-DUU.json"
+  },
+  {
+    "start": "DDD",
+    "goal": "UDD",
+    "duration": 2.0,
+    "file": "DDD-UDD.json"
+  },
+  {
+    "start": "DDD",
+    "goal": "UDU",
+    "duration": 2.5,
+    "file": "DDD-UDU.json"
+  },
+  {
+    "start": "DDD",
+    "goal": "UUD",
+    "duration": 2.5,
+    "file": "DDD-UUD.json"
+  },
+  {
+    "start": "DDD",
+    "goal": "UUU",
+    "duration": 3.0,
+    "file": "DDD-UUU.json"
+  },
+  {
+    "start": "DDU",
+    "goal": "DDD",
+    "duration": 2.0,
+    "file": "DDU-DDD.json"
+  },
+  {
+    "start": "DDU",
+    "goal": "DUU",
+    "duration": 3.0,
+    "file": "DDU-DUU.json"
+  },
+  {
+    "start": "DDU",
+    "goal": "UDU",
+    "duration": 2.0,
+    "file": "DDU-UDU.json"
+  },
+  {
+    "start": "DUD",
+    "goal": "DDD",
+    "duration": 2.0,
+    "file": "DUD-DDD.json"
+  },
+  {
+    "start": "DUD",
+    "goal": "DUU",
+    "duration": 2.0,
+    "file": "DUD-DUU.json"
+  },
+  {
+    "start": "DUD",
+    "goal": "UUD",
+    "duration": 2.0,
+    "file": "DUD-UUD.json"
+  },
+  {
+    "start": "DUU",
+    "goal": "DDD",
+    "duration": 2.5,
+    "file": "DUU-DDD.json"
+  },
+  {
+    "start": "DUU",
+    "goal": "DDU",
+    "duration": 2.0,
+    "file": "DUU-DDU.json"
+  },
+  {
+    "start": "DUU",
+    "goal": "DUD",
+    "duration": 2.0,
+    "file": "DUU-DUD.json"
+  },
+  {
+    "start": "DUU",
+    "goal": "UUU",
+    "duration": 2.0,
+    "file": "DUU-UUU.json"
+  },
+  {
+    "start": "UDD",
+    "goal": "DDD",
+    "duration": 2.0,
+    "file": "UDD-DDD.json"
+  },
+  {
+    "start": "UDD",
+    "goal": "UDU",
+    "duration": 2.0,
+    "file": "UDD-UDU.json"
+  },
+  {
+    "start": "UDD",
+    "goal": "UUD",
+    "duration": 3.0,
+    "file": "UDD-UUD.json"
+  },
+  {
+    "start": "UDU",
+    "goal": "DDD",
+    "duration": 2.5,
+    "file": "UDU-DDD.json"
+  },
+  {
+    "start": "UDU",
+    "goal": "DDU",
+    "duration": 2.0,
+    "file": "UDU-DDU.json"
+  },
+  {
+    "start": "UDU",
+    "goal": "UDD",
+    "duration": 2.0,
+    "file": "UDU-UDD.json"
+  },
+  {
+    "start": "UDU",
+    "goal": "UUU",
+    "duration": 2.0,
+    "file": "UDU-UUU.json"
+  },
+  {
+    "start": "UUD",
+    "goal": "DDD",
+    "duration": 2.5,
+    "file": "UUD-DDD.json"
+  },
+  {
+    "start": "UUD",
+    "goal": "DUD",
+    "duration": 2.0,
+    "file": "UUD-DUD.json"
+  },
+  {
+    "start": "UUD",
+    "goal": "UDD",
+    "duration": 3.0,
+    "file": "UUD-UDD.json"
+  },
+  {
+    "start": "UUD",
+    "goal": "UUU",
+    "duration": 2.0,
+    "file": "UUD-UUU.json"
+  },
+  {
+    "start": "UUU",
+    "goal": "DDD",
+    "duration": 3.0,
+    "file": "UUU-DDD.json"
+  },
+  {
+    "start": "UUU",
+    "goal": "DUU",
+    "duration": 2.0,
+    "file": "UUU-DUU.json"
+  },
+  {
+    "start": "UUU",
+    "goal": "UDU",
+    "duration": 2.0,
+    "file": "UUU-UDU.json"
+  },
+  {
+    "start": "UUU",
+    "goal": "UUD",
+    "duration": 3.0,
+    "file": "UUU-UUD.json"
+  }
+]

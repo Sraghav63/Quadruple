@@ -31,6 +31,17 @@ export class LQRController {
     this.xRef = xRef;
   }
 
+  seed(deviation: ArrayLike<number>, inFlight: ArrayLike<number>, xRef = 0): void {
+    const m = this.matrices;
+    this.z.fill(0);
+    for (let i = 0; i < 3 + 2 * (m.ny - 1); i++) this.z[i] = deviation[i];
+    const { delay, nx } = m;
+    for (let i = 0; i < delay; i++) this.z[nx + i] = inFlight[i];
+    this.xRef = xRef;
+  }
+
+  get physicalEstimate(): Float64Array { return this.z.slice(0, 3 + 2 * (this.matrices.ny - 1)); }
+
   step(measurement: Measurement, xRef = 0): number {
     const { z, matrices: m, innovation, next } = this;
     z[0] -= xRef - this.xRef;

@@ -6,7 +6,7 @@ then checks each candidate closed loop in the MuJoCo plant (the real-time
 supervisor: centre, track with time-varying LQR, hand off to the balancing
 controller) from a few seeded tilts. Accepted transitions are written to
 data/transitions/<preset>/<start>-<goal>.json with an index.json. Existing files
-are kept unless --force, so the script can be resumed.
+are kept unless --force (or re-checked with --revalidate), so the script can be resumed.
 
 Default edges: swing-up from all-down to every configuration, swing-down from
 every configuration to all-down, and every single-link flip. The runtime routes
@@ -20,7 +20,6 @@ import json
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from pathlib import Path
 
 for _name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_name, "1")
@@ -30,7 +29,14 @@ import numpy as np
 from quad_pendulum.params import all_configurations, parse_configuration, wrap_angle
 from quad_pendulum.presets import preset_rig, presets
 from quad_pendulum.sim import Simulation
-from quad_pendulum.transition import DATA_DIR, TransitionLibrary, Trajectory, plan_transition
+from quad_pendulum.transition import (
+    DATA_DIR,
+    PlanLimits,
+    Trajectory,
+    TransitionLibrary,
+    plan_transition,
+    reversed_trajectory,
+)
 
 
 def default_edges(n: int) -> list[tuple[str, str]]:
@@ -47,54 +53,94 @@ def default_edges(n: int) -> list[tuple[str, str]]:
     return sorted(edges)
 
 
+# Gentler plans leave the feedback more of the drive's 30 m/s^2 and 2.5 m/s;
+# some transitions only track reliably that way, others only fit the rail fast.
+LIMIT_PROFILES = (PlanLimits(), PlanLimits(rail=0.45, velocity=1.8, accel_command=18.0, force=100.0))
+HOLD_SECONDS = 6.0  # balance first, so the transition starts from the stiction wobble
+
+
 def validate(preset: str, traj: Trajectory, seeds: int, tilt_deg: float) -> tuple[int, float]:
-    """Closed-loop trials through Simulation; returns (successes, worst tracking deg)."""
+    """Closed-loop trials through Simulation; returns (successes, worst tracking deg).
+
+    Each trial balances the start configuration for HOLD_SECONDS (joint stiction
+    keeps it wobbling, as it would on the rig), then requests the goal and must
+    arrive in hold and stay up for 2 s."""
     rig = preset_rig(preset)
     lib = TransitionLibrary(trajectories=[traj])
     ok, worst = 0, 0.0
     for seed in range(seeds):
         sim = Simulation(rig, seed=seed, configuration=traj.start, transitions=lib)
         sim.reset(random_tilt_deg=tilt_deg)
-        sim.run(0.3)
-        sim.request_configuration(traj.goal)
-        end = sim.t + 2.0 + traj.duration + 2.0
-        while sim.t < end and not sim.fallen:
+        sim.run(HOLD_SECONDS)
+        if sim.fallen or not sim.request_configuration(traj.goal):
+            continue
+        deadline = sim.t + 3.0 + traj.duration  # centring allowance + the swing
+        arrived = None
+        while not sim.fallen:
             sim.step()
+            if arrived is None and sim.mode == "hold" and sim.configuration == traj.goal:
+                arrived = sim.t
+            if arrived is not None and sim.t >= arrived + 2.0:  # balance 2 s at the goal
+                break
+            if arrived is None and sim.t >= deadline:
+                break
             if sim.mode == "transition":
                 k = min(sim.tracker.k, sim.tracker.steps)
                 theta = sim.plant.state()["theta"]
                 dev = np.abs(wrap_angle(theta - sim.tracker.nominal[3 : 3 + rig.n_links, k]))
                 worst = max(worst, float(dev.max()))
-        ok += int(not sim.fallen and sim.mode == "hold" and sim.configuration == traj.goal)
+        ok += int(arrived is not None and not sim.fallen and sim.mode == "hold")
+        if ok <= seed:  # one failure is enough to reject
+            break
     return ok, float(np.rad2deg(worst))
 
 
+def candidates(preset, rig, start, goal, flips, attempts):
+    """Plans to try, cheapest first: each limit profile and duration, the reversed
+    opposite transition as a guess (if planned), then random guesses."""
+    reverse = DATA_DIR / preset / f"{goal}-{start}.json"
+    for limits in LIMIT_PROFILES:
+        gentle = limits.accel_command < PlanLimits().accel_command
+        base = 1.5 + 0.5 * flips + (1.0 if gentle else 0.0)
+        for duration in (base, base + 1.0, base + 2.0):
+            if reverse.exists():
+                rev = reversed_trajectory(Trajectory.load(reverse))
+                yield plan_transition(rig, start, goal, duration, limits=limits, initial=rev, max_iter=1500)
+            for attempt in range(attempts):
+                yield plan_transition(rig, start, goal, duration, limits=limits, seed=attempt, max_iter=1500)
+
+
 def plan_edge(args) -> dict:
-    preset, start, goal, durations, attempts, seeds, tilt = args
+    preset, start, goal, attempts, seeds, tilt, revalidate = args
     rig = preset_rig(preset)
+    out = DATA_DIR / preset / f"{start}-{goal}.json"
     t0 = time.time()
     tried = 0
-    best = None
-    for duration in durations:
-        for attempt in range(attempts):
+    found = None
+    if out.exists():
+        traj = Trajectory.load(out)
+        ok, worst = validate(preset, traj, seeds, tilt) if revalidate else (seeds, 0.0)
+        if ok == seeds:
+            found = (traj, worst, "kept")
+    if found is None:
+        flips = sum(a != b for a, b in zip(start, goal))
+        for traj in candidates(preset, rig, start, goal, flips, attempts):
             tried += 1
-            traj = plan_transition(rig, start, goal, duration, seed=attempt, max_iter=1500)
             if traj is None:
                 continue
             ok, worst = validate(preset, traj, seeds, tilt)
-            if ok == seeds and (best is None or worst < best[1]):
-                best = (traj, worst)
-            if best is not None:
+            if ok == seeds:
+                found = (traj, worst, "planned")
                 break
-        if best is not None:
-            break
     result = {"preset": preset, "start": start, "goal": goal, "tried": tried,
-              "seconds": round(time.time() - t0, 1), "ok": best is not None}
-    if best is not None:
-        traj, worst = best
-        out = DATA_DIR / preset / f"{start}-{goal}.json"
+              "seconds": round(time.time() - t0, 1), "ok": found is not None}
+    if found is not None:
+        traj, worst, how = found
         traj.save(out)
-        result.update(duration=traj.duration, worst_deg=round(worst, 2), cost=round(traj.cost, 1))
+        result.update(duration=traj.duration, worst_deg=round(worst, 2), how=how,
+                      accel=traj.limits.accel_command)
+    elif out.exists():
+        out.unlink()  # an existing transition that no longer validates is dropped
     return result
 
 
@@ -113,7 +159,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--preset", action="append", help="preset id (repeatable; default all)")
     ap.add_argument("--pairs", help="comma-separated START-GOAL list instead of the default edges")
-    ap.add_argument("--attempts", type=int, default=4, help="random initial guesses per duration")
+    ap.add_argument("--attempts", type=int, default=2, help="random initial guesses per duration")
+    ap.add_argument("--revalidate", action="store_true",
+                    help="re-check existing transitions (dropped and replanned if they fail)")
     ap.add_argument("--seeds", type=int, default=3, help="closed-loop validation trials")
     ap.add_argument("--tilt-deg", type=float, default=0.3, help="validation start tilt")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
@@ -130,12 +178,12 @@ def main() -> None:
             edges = default_edges(n)
         (DATA_DIR / pid).mkdir(parents=True, exist_ok=True)
         for start, goal in edges:
-            if not args.force and (DATA_DIR / pid / f"{start}-{goal}.json").exists():
+            exists = (DATA_DIR / pid / f"{start}-{goal}.json").exists()
+            if exists and args.force:
+                (DATA_DIR / pid / f"{start}-{goal}.json").unlink()
+            elif exists and not args.revalidate:
                 continue
-            flips = sum(a != b for a, b in zip(start, goal))
-            base = 1.5 + 0.5 * flips
-            durations = [base, base + 1.0, base + 2.0]
-            jobs.append((pid, start, goal, durations, args.attempts, args.seeds, args.tilt_deg))
+            jobs.append((pid, start, goal, args.attempts, args.seeds, args.tilt_deg, args.revalidate))
     print(f"{len(jobs)} transitions to plan on {args.workers} workers", flush=True)
     failed = []
     with ProcessPoolExecutor(args.workers) as ex:
@@ -144,7 +192,8 @@ def main() -> None:
             r = fut.result()
             tag = f"{r['preset']:10s} {r['start']}->{r['goal']}"
             if r["ok"]:
-                print(f"[{i}/{len(jobs)}] {tag} T={r['duration']:.1f}s track<={r['worst_deg']:.1f}deg "
+                print(f"[{i}/{len(jobs)}] {tag} {r['how']} T={r['duration']:.1f}s "
+                      f"a<={r['accel']:.0f} track<={r['worst_deg']:.1f}deg "
                       f"({r['tried']} tries, {r['seconds']}s)", flush=True)
             else:
                 failed.append(tag)

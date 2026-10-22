@@ -47,20 +47,39 @@ and `thetaEq` (absolute target angles in radians). The top-level `controller`
 and `unstablePoles` remain the all-up default. Letters run **bottom link first**:
 `UUUD` has its top link hanging down; `DDUU` has its bottom two down.
 
-Use the coloured link buttons in the side panel to choose each target. Changing
-configuration resets the plant to that equilibrium and re-arms the controller;
-swing-up transitions are not implemented. Share a preset and configuration with
-`#quad/UUUD`; older `#quad` links still start all-up. Angle telemetry and plots
-show wrapped deviations from the selected targets, while the ghost chain uses
-absolute estimated angles. All-down has zero unstable modes and is naturally
-stable; the controller damps its motion.
+The simulation starts with every link hanging down at rest; Reset returns to
+that state and centres the target. The configuration picker is a **go to**
+control: choosing a target centres and settles the cart, tracks a planned
+motion, then hands off to the goal's balancing controller without stopping the
+simulation. Sparse libraries can route through intermediate configurations;
+the panel shows the route, current edge and progress, or an explicit no-route
+message. The picker is disabled during a request.
 
-Parity tests cover all-up and mixed controller traces (including encoder wrap),
-upright and mixed MuJoCo plant traces, and six-second closed-loop runs with a
-20 cm reference step and a 0.08 N tap from equilibrium for every exported
-configuration. These are nominal checks, not robustness guarantees: an extra
-0.05-degree random starting tilt caused `quad-short/DDUU` to fall in the
-combined step/tap scenario, and a similar failure reproduced in Python/MuJoCo.
+Share a target with `#quad/UUUD`: it starts hanging and then requests UUUD live.
+A bare `#quad` stays all-down. The ghost chain uses the active controller's
+absolute estimated angles and cart position. Angle and cart plots show errors
+from the current target (the time-varying nominal during a transition). The
+scene fits the full swing envelope.
+
+Transitions are offline direct-collocation motions in
+`data/transitions/<preset>/`. The exporter copies them to
+`public/presets/<preset>/transitions/`, generating an index from completed files
+when the library is still being built. Rerun the exporter as generation finishes
+to include new routes. Only requested route files are fetched in the browser.
+
+The tracker samples cubic Hermite trajectories, linearises the nonlinear chain
+by central differences, uses Padé matrix exponentials for ZOH discretisation,
+and designs a time-varying LQR with a backward Riccati pass. A time-varying
+Kalman covariance update runs online. Design runs in batches budgeted to 4 ms,
+yielding to the browser between batches while the balancing loop continues;
+controllers are cached for subsequent requests. `SimStatus.designMs` and
+`designMaxBatchMs` report wall time and the largest design batch.
+
+Parity tests cover all-up and mixed balancing controllers, MuJoCo plant traces,
+and the DD→UU tracker (nominal samples, discrete matrices, gains, Kalman states
+and commands). Closed-loop tests cover one- and two-link swing-ups and the quad
+swing-up when its source file exists. Equilibrium step/tap checks remain nominal
+checks, not robustness guarantees.
 
 ## Deploying
 

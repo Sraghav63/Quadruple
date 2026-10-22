@@ -1,3 +1,4 @@
+import type { TransitionEntry, TransitionConfig } from "./transition";
 // Shared contract between the simulation core (src/sim) and the UI (src/ui).
 // Preset JSON is produced by scripts/export_web.py from the Python package, so
 // field names mirror quad_pendulum.params (snake_case -> camelCase).
@@ -35,6 +36,8 @@ export interface ControllerMatrices {
   configuration: string; // U/D per link, bottom first
   thetaEq: number[]; // absolute target angles, rad
   nz: number;
+  nx: number;
+  delay: number;
   ny: number; // 1 + nLinks
   dt: number;
   accelLimit: number;
@@ -50,6 +53,8 @@ export interface ControllerMatrices {
 }
 
 export interface Preset {
+  transitions?: TransitionEntry[];
+  transitionConfig?: TransitionConfig;
   id: string;
   name: string;
   description: string;
@@ -89,6 +94,17 @@ export interface RealityKnobs {
 }
 
 export interface SimStatus {
+  mode: 'hold' | 'center' | 'transition';
+  target: string;
+  route: string[];
+  currentEdge: string | null;
+  transitionProgress: number | null;
+  designProgress: number | null;
+  designMs: number;
+  designMaxBatchMs: number;
+  transitionError: string | null;
+  xEstimate: number;
+
   configuration: string;
   t: number; // s
   x: number; // cart position, m
@@ -117,7 +133,8 @@ export interface SimulationApi {
   readonly rig: RigParams; // nominal (preset) rig
   readonly knobs: RealityKnobs;
   readonly configuration: string;
-  setConfiguration(configuration: string): void; // resets near the selected equilibrium
+  setConfiguration(configuration: string, opts?: { randomTiltDeg?: number; theta?: number[] }): void; // explicit equilibrium jump, for parity fixtures
+  requestConfiguration(configuration: string): Promise<boolean>; // live, without resetting
   controllerEnabled: boolean;
   reset(opts?: { randomTiltDeg?: number; theta?: number[] }): void;
   setReference(x: number): void; // clipped to +-0.8 rail
